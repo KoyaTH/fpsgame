@@ -12,6 +12,7 @@ const io = new Server(server, {
 });
 const PORT = process.env.PORT || 3000;
 app.use(express.static(path.join(__dirname, 'public')));
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 function getLocalAddress() {
   const interfaces = os.networkInterfaces();
@@ -336,7 +337,7 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Servidor rodando na porta ${PORT} (pronto para hospedagem v8)`);
   console.log(`Para jogar na mesma rede: ${LAN_URL}`);
 });
