@@ -92,6 +92,13 @@ canvas { display: block; }
               linear-gradient(-45deg, transparent 45%, #fff 45%, #fff 55%, transparent 55%);
 }
 #hitmarker.headshot { background: linear-gradient(45deg, transparent 45%, #f33 45%, #f33 55%, transparent 55%), linear-gradient(-45deg, transparent 45%, #f33 45%, #f33 55%, transparent 55%); }
+#damageFlash { position: fixed; inset: 0; pointer-events: none; z-index: 18; opacity: 0; background: radial-gradient(circle, transparent 45%, rgba(220, 35, 35, 0.42) 130%); }
+#damageFlash.show { animation: damageFlash 0.32s ease-out; }
+@keyframes damageFlash { 0% { opacity: 0.85; } 100% { opacity: 0; } }
+.damageNumber { position: absolute; transform: translate(-50%, -50%); color: #fff; font-size: 22px; font-weight: 800; text-shadow: 0 2px 3px #000; animation: damageNumber 0.65s ease-out forwards; }
+.damageNumber.headshot { color: #ff5b5b; }
+.damageNumber.eliminated { color: #facc15; font-size: 16px; }
+@keyframes damageNumber { to { transform: translate(-50%, -115%); opacity: 0; } }
 
 #scoreboardMini {
   position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
@@ -115,4 +122,6 @@ table#finalScoreTable th { color: #4ade80; }
 .voteOption.voted { border-color: #4ade80; background: #16281f; }
 #voteTimer { font-size: 14px; color: #aaa; }
 
-.nameTag { position: fixed; color: #fff; font-size: 12px; transform: translate(-50%, -100%); text-shadow: 1px 1px 2px #000; pointer-events: none; z-index: 5; }
+.nameTag { position: fixed; min-width: 74px; transform: translate(-50%, -100%); text-align: center; color: #fff; font-size: 12px; font-weight: 700; text-shadow: 1px 1px 2px #000; pointer-events: none; z-index: 5; }
+.enemyHealth { width: 74px; height: 6px; margin-top: 4px; border: 1px solid rgba(0, 0, 0, 0.7); border-radius: 4px; overflow: hidden; background: rgba(0, 0, 0, 0.6); }
+.enemyHealthFill { height: 100%; background: linear-gradient(90deg, #ef4444, #4ade80); }

@@ -12,6 +12,9 @@ const remotePlayers = {}; // id -> { group, head, body, targetPos, data }
 const nameTagsDiv = document.createElement('div');
 nameTagsDiv.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:5;';
 document.body.appendChild(nameTagsDiv);
+const damageNumbersDiv = document.createElement('div');
+damageNumbersDiv.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:20;';
+document.body.appendChild(damageNumbersDiv);
 
 let myLoadout = [];
 let myWeaponKey = null;
@@ -227,7 +230,7 @@ function colorFromId(id) {
   return new THREE.Color(`hsl(${Math.abs(hash) % 360}, 70%, 55%)`);
 }
 
-function buildPlayerMesh(color) {
+function buildLegacyPlayerMesh(color) {
   const group = new THREE.Group();
 
   const body = new THREE.Mesh(
@@ -257,6 +260,38 @@ function buildPlayerMesh(color) {
   armR.userData.isHead = false;
   group.add(armL, armR);
 
+  return group;
+}
+
+function buildPlayerMesh(color) {
+  const group = new THREE.Group();
+  const suitMat = new THREE.MeshStandardMaterial({ color, roughness: 0.8 });
+  const accentMat = new THREE.MeshStandardMaterial({ color: color.clone().offsetHSL(0, 0, -0.12), roughness: 0.7 });
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0xd49a70, roughness: 0.9 });
+  const visorMat = new THREE.MeshStandardMaterial({ color: 0x87d8ff, emissive: 0x173c58, roughness: 0.25 });
+  const bootMat = new THREE.MeshStandardMaterial({ color: 0x20242b });
+  const addPart = (geometry, material, x, y, z, isHead = false) => {
+    const part = new THREE.Mesh(geometry, material);
+    part.position.set(x, y, z);
+    part.userData.isHead = isHead;
+    group.add(part);
+    return part;
+  };
+
+  addPart(new THREE.BoxGeometry(0.78, 0.82, 0.42), suitMat, 0, 1.1, 0);
+  addPart(new THREE.BoxGeometry(0.84, 0.18, 0.47), accentMat, 0, 1.44, 0);
+  addPart(new THREE.BoxGeometry(0.28, 0.72, 0.3), accentMat, -0.23, 0.36, 0);
+  addPart(new THREE.BoxGeometry(0.28, 0.72, 0.3), accentMat, 0.23, 0.36, 0);
+  addPart(new THREE.BoxGeometry(0.31, 0.13, 0.44), bootMat, -0.23, 0.04, -0.04);
+  addPart(new THREE.BoxGeometry(0.31, 0.13, 0.44), bootMat, 0.23, 0.04, -0.04);
+  [-1, 1].forEach((side) => {
+    addPart(new THREE.BoxGeometry(0.21, 0.43, 0.22), suitMat, side * 0.5, 1.17, 0);
+    addPart(new THREE.BoxGeometry(0.18, 0.35, 0.19), accentMat, side * 0.53, 0.8, -0.1);
+    addPart(new THREE.BoxGeometry(0.18, 0.15, 0.2), skinMat, side * 0.55, 0.61, -0.16);
+  });
+  addPart(new THREE.BoxGeometry(0.54, 0.54, 0.52), skinMat, 0, 1.88, 0, true);
+  addPart(new THREE.BoxGeometry(0.38, 0.16, 0.035), visorMat, 0, 1.92, -0.28, true);
+  addPart(new THREE.BoxGeometry(0.14, 0.13, 0.55), bootMat, 0.3, 0.76, -0.44);
   return group;
 }
 
@@ -310,7 +345,9 @@ function connectSocket(name) {
     myId = data.id;
     if (data.game) {
       gameStatus = data.game.status;
-      if (data.game.currentMap !== currentMapId) loadMap(data.game.currentMap);
+      // gameInfo já atualiza currentMapId antes do init; carregue sempre a
+      // geometria do mapa do servidor para não manter obstáculos antigos.
+      loadMap(data.game.currentMap);
     }
     for (const id in data.players) {
       if (id === myId) continue;
@@ -358,20 +395,28 @@ function connectSocket(name) {
     updateWeaponHUD();
   });
 
-  socket.on('playerDamaged', ({ id, health }) => {
+  socket.on('playerDamaged', ({ id, health, attackerId, damage, headshot }) => {
     if (id === myId) {
       myHealth = health;
       updateHealthHUD();
+      showDamageFlash();
     }
-    if (id === lastShotTargetId) showHitmarker(false);
+    if (remotePlayers[id]) remotePlayers[id].data.health = health;
+    if (attackerId === myId) {
+      showHitmarker(!!headshot);
+      showDamageNumber(id, damage, !!headshot);
+    }
   });
 
-  socket.on('playerDied', ({ id, killerId }) => {
+  socket.on('playerDied', ({ id, killerId, damage, headshot }) => {
     if (id === myId) {
       myAlive = false;
       controls.unlock();
     }
-    if (id === lastShotTargetId && killerId === myId) showHitmarker(true);
+    if (killerId === myId) {
+      showHitmarker(!!headshot);
+      showDamageNumber(id, damage, !!headshot, true);
+    }
   });
 
   socket.on('respawned', ({ x, y, z, ammo, weaponKey, health }) => {
@@ -488,6 +533,27 @@ function showHitmarker(headshot) {
   if (headshot) hm.classList.add('headshot');
   clearTimeout(hitmarkerTimeout);
   hitmarkerTimeout = setTimeout(() => hm.classList.remove('show', 'headshot'), 250);
+}
+
+function showDamageFlash() {
+  const flash = document.getElementById('damageFlash');
+  flash.classList.remove('show');
+  void flash.offsetWidth;
+  flash.classList.add('show');
+}
+
+function showDamageNumber(id, damage, headshot, eliminated = false) {
+  const rp = remotePlayers[id];
+  if (!rp || !damage) return;
+  const pos = rp.group.position.clone().add(new THREE.Vector3(0, 2.2, 0)).project(camera);
+  if (pos.z < -1 || pos.z > 1 || Math.abs(pos.x) > 1 || Math.abs(pos.y) > 1) return;
+  const el = document.createElement('div');
+  el.className = `damageNumber${headshot ? ' headshot' : ''}${eliminated ? ' eliminated' : ''}`;
+  el.textContent = eliminated ? `+${damage} ELIMINADO` : `-${damage}`;
+  el.style.left = `${(pos.x * 0.5 + 0.5) * window.innerWidth}px`;
+  el.style.top = `${(-pos.y * 0.5 + 0.5) * window.innerHeight}px`;
+  damageNumbersDiv.appendChild(el);
+  setTimeout(() => el.remove(), 650);
 }
 
 function updateScoreboardMini(snapshot) {
@@ -860,20 +926,31 @@ function animate() {
 
 function updateNameTags() {
   nameTagsDiv.innerHTML = '';
+  const viewDirection = camera.getWorldDirection(new THREE.Vector3());
   for (const id in remotePlayers) {
     const rp = remotePlayers[id];
     if (!rp.group.visible) continue;
     const headPos = rp.group.position.clone();
     headPos.y += 2.15;
+    const toPlayer = headPos.clone().sub(camera.position);
+    if (toPlayer.lengthSq() > 10000 || viewDirection.dot(toPlayer.normalize()) <= 0) continue;
     const screenPos = headPos.project(camera);
-    if (screenPos.z > 1) continue;
+    if (screenPos.z < -1 || screenPos.z > 1 || Math.abs(screenPos.x) > 1 || Math.abs(screenPos.y) > 1) continue;
     const x = (screenPos.x * 0.5 + 0.5) * window.innerWidth;
     const y = (-screenPos.y * 0.5 + 0.5) * window.innerHeight;
     const tag = document.createElement('div');
     tag.className = 'nameTag';
     tag.style.left = `${x}px`;
     tag.style.top = `${y}px`;
-    tag.textContent = rp.data.name || 'Jogador';
+    const name = document.createElement('div');
+    name.textContent = rp.data.name || 'Jogador';
+    const healthBar = document.createElement('div');
+    healthBar.className = 'enemyHealth';
+    const healthFill = document.createElement('div');
+    healthFill.className = 'enemyHealthFill';
+    healthFill.style.width = `${Math.max(0, Math.min(rp.data.health ?? 100, 100))}%`;
+    healthBar.appendChild(healthFill);
+    tag.append(name, healthBar);
     nameTagsDiv.appendChild(tag);
   }
 }

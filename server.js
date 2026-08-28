@@ -310,7 +310,12 @@ io.on('connection', (socket) => {
         weapon: w.name,
         headshot: !!isHead,
       });
-      io.emit('playerDied', { id: targetId, killerId: socket.id });
+      io.emit('playerDied', {
+        id: targetId,
+        killerId: socket.id,
+        damage: dmg,
+        headshot: !!isHead,
+      });
       setTimeout(() => {
         if (players[targetId] && game.status === 'playing') {
           spawnPlayer(players[targetId]);
@@ -321,7 +326,13 @@ io.on('connection', (socket) => {
         }
       }, RESPAWN_DELAY);
     } else {
-      io.emit('playerDamaged', { id: targetId, health: target.health });
+      io.emit('playerDamaged', {
+        id: targetId,
+        health: target.health,
+        attackerId: socket.id,
+        damage: dmg,
+        headshot: !!isHead,
+      });
     }
   });
 
@@ -338,6 +349,6 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Servidor rodando na porta ${PORT} (pronto para hospedagem v8)`);
+  console.log(`Servidor rodando na porta ${PORT} (mapas sincronizados e feedback v9)`);
   console.log(`Para jogar na mesma rede: ${LAN_URL}`);
 });
