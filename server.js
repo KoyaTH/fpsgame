@@ -1,0 +1,342 @@
+const express = require('express');
+const http = require('http');
+const os = require('os');
+const path = require('path');
+const { Server } = require('socket.io');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  // Aceita WebSocket para baixa latência e HTTP polling como alternativa.
+  transports: ['websocket', 'polling'],
+});
+const PORT = process.env.PORT || 3000;
+app.use(express.static(path.join(__dirname, 'public')));
+
+function getLocalAddress() {
+  const interfaces = os.networkInterfaces();
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries || []) {
+      if (entry.family === 'IPv4' && !entry.internal) return entry.address;
+    }
+  }
+  return 'localhost';
+}
+
+const LAN_URL = `http://${getLocalAddress()}:${PORT}`;
+app.get('/server-info', (req, res) => res.json({ inviteUrl: LAN_URL }));
+app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
+
+// ---------------------------------------------------------------------------
+// CONFIGURAÇÃO DE ARMAS (precisa bater com public/game.js)
+// ---------------------------------------------------------------------------
+const WEAPONS = {
+  smg:     { name: 'Metralhadora', maxAmmo: 30, dmgBody: 18, dmgHead: 36,  fireRate: 110,  reloadTime: 2000, auto: true },
+  sniper:  { name: 'Sniper',       maxAmmo: 3,  dmgBody: 60, dmgHead: 999, fireRate: 1100, reloadTime: 2600, auto: false },
+  pistol:  { name: 'Pistolinha',   maxAmmo: 12, dmgBody: 22, dmgHead: 44,  fireRate: 240,  reloadTime: 1500, auto: false },
+  grapple: { name: 'Grappling Hook', maxAmmo: Infinity, dmgBody: 0, dmgHead: 0, fireRate: 550, reloadTime: 0, auto: false, isUtility: true },
+  knife:   { name: 'Faca',         maxAmmo: Infinity, dmgBody: 40, dmgHead: 80, fireRate: 450, reloadTime: 0, auto: false, isMelee: true },
+};
+
+// ---------------------------------------------------------------------------
+// MAPAS (só precisamos dos spawns aqui; a geometria é renderizada no cliente)
+// ---------------------------------------------------------------------------
+const MAPS = {
+  arena: {
+    name: 'Arena Clássica',
+    spawns: [
+      { x: 32, z: 32 }, { x: -32, z: 32 }, { x: 32, z: -32 }, { x: -32, z: -32 },
+      { x: 0, z: 33 }, { x: 0, z: -33 }, { x: 33, z: 0 }, { x: -33, z: 0 },
+    ],
+  },
+  cidade: {
+    name: 'Cidade Pequena',
+    spawns: [
+      { x: 34, z: 34 }, { x: -34, z: 34 }, { x: 34, z: -34 }, { x: -34, z: -34 },
+      { x: 0, z: 34 }, { x: 0, z: -34 }, { x: 34, z: 12 }, { x: -34, z: -12 },
+    ],
+  },
+  deserto: {
+    name: 'Dunas do Deserto',
+    spawns: [
+      { x: 33, z: 33 }, { x: -33, z: 33 }, { x: 33, z: -33 }, { x: -33, z: -33 },
+      { x: 0, z: 33 }, { x: 0, z: -33 }, { x: 33, z: 14 }, { x: -33, z: -14 },
+    ],
+  },
+};
+const MAP_IDS = Object.keys(MAPS);
+
+// ---------------------------------------------------------------------------
+// ESTADO DA PARTIDA
+// ---------------------------------------------------------------------------
+const MATCH_DURATION = 5 * 60; // 5 minutos em segundos
+const VOTE_DURATION = 15;
+const END_SCREEN_DURATION = 6;
+const RESPAWN_DELAY = 3000;
+
+const game = {
+  status: 'waiting', // 'waiting' | 'playing' | 'ended' | 'voting'
+  currentMap: MAP_IDS[0],
+  timeLeft: MATCH_DURATION,
+  voteOptions: [],
+  votes: {}, // socketId -> mapId
+};
+
+const players = {}; // socketId -> player object
+
+function randomSpawn(mapId) {
+  const spawns = MAPS[mapId].spawns;
+  const s = spawns[Math.floor(Math.random() * spawns.length)];
+  return { x: s.x, y: 1.6, z: s.z };
+}
+
+function freshAmmo(loadout) {
+  return {
+    [loadout[0]]: WEAPONS[loadout[0]].maxAmmo === Infinity ? -1 : WEAPONS[loadout[0]].maxAmmo,
+    [loadout[1]]: WEAPONS[loadout[1]].maxAmmo === Infinity ? -1 : WEAPONS[loadout[1]].maxAmmo,
+    knife: -1,
+  };
+}
+
+function spawnPlayer(p) {
+  const spawn = randomSpawn(game.currentMap);
+  p.x = spawn.x; p.y = spawn.y; p.z = spawn.z; p.rotY = 0;
+  p.health = 100;
+  p.alive = true;
+  p.weaponKey = p.loadout[0];
+  p.ammo = freshAmmo(p.loadout);
+  p.lastShot = 0;
+  p.reloadingUntil = 0;
+}
+
+function scoreboard() {
+  return Object.values(players)
+    .map((p) => ({ name: p.name, kills: p.kills, deaths: p.deaths }))
+    .sort((a, b) => b.kills - a.kills);
+}
+
+// ---------------------------------------------------------------------------
+// MÁQUINA DE ESTADOS DA PARTIDA
+// ---------------------------------------------------------------------------
+function startMatch(mapId) {
+  game.status = 'playing';
+  game.currentMap = mapId;
+  game.timeLeft = MATCH_DURATION;
+  for (const id in players) {
+    players[id].kills = 0;
+    players[id].deaths = 0;
+    spawnPlayer(players[id]);
+  }
+  io.emit('matchStarted', { mapId, mapName: MAPS[mapId].name, duration: MATCH_DURATION });
+  for (const id in players) {
+    const p = players[id];
+    io.to(id).emit('respawned', { x: p.x, y: p.y, z: p.z, ammo: p.ammo, weaponKey: p.weaponKey, health: p.health });
+  }
+}
+
+function endMatch() {
+  game.status = 'ended';
+  io.emit('matchEnded', { scoreboard: scoreboard() });
+  setTimeout(startVoting, END_SCREEN_DURATION * 1000);
+}
+
+function startVoting() {
+  game.status = 'voting';
+  game.timeLeft = VOTE_DURATION;
+  game.votes = {};
+  // sempre oferece os 3 mapas
+  game.voteOptions = [...MAP_IDS];
+  io.emit('voteStart', {
+    options: game.voteOptions.map((id) => ({ id, name: MAPS[id].name })),
+    duration: VOTE_DURATION,
+  });
+}
+
+function tallyVotesAndStart() {
+  const tally = {};
+  game.voteOptions.forEach((id) => (tally[id] = 0));
+  Object.values(game.votes).forEach((mapId) => {
+    if (tally[mapId] !== undefined) tally[mapId] += 1;
+  });
+  let winner = game.voteOptions[Math.floor(Math.random() * game.voteOptions.length)];
+  let best = -1;
+  for (const id in tally) {
+    if (tally[id] > best) { best = tally[id]; winner = id; }
+  }
+  startMatch(winner);
+}
+
+// timer principal (1x por segundo)
+setInterval(() => {
+  if (game.status === 'playing') {
+    game.timeLeft -= 1;
+    io.emit('matchTime', { timeLeft: game.timeLeft });
+    if (game.timeLeft <= 0) endMatch();
+  } else if (game.status === 'voting') {
+    game.timeLeft -= 1;
+    io.emit('voteTime', { timeLeft: game.timeLeft });
+    if (game.timeLeft <= 0) tallyVotesAndStart();
+  }
+}, 1000);
+
+// broadcast de posições (20Hz)
+setInterval(() => {
+  if (game.status !== 'playing') return;
+  const snapshot = {};
+  for (const id in players) {
+    const p = players[id];
+    if (!p.joined) continue;
+    snapshot[id] = { id, x: p.x, y: p.y, z: p.z, rotY: p.rotY, health: p.health, alive: p.alive, name: p.name, weaponKey: p.weaponKey, kills: p.kills, deaths: p.deaths };
+  }
+  io.emit('state', snapshot);
+}, 50);
+
+// ---------------------------------------------------------------------------
+// SOCKET.IO
+// ---------------------------------------------------------------------------
+io.on('connection', (socket) => {
+  socket.emit('gameInfo', {
+    status: game.status,
+    currentMap: game.currentMap,
+    mapName: MAPS[game.currentMap].name,
+    timeLeft: game.timeLeft,
+    inviteUrl: LAN_URL,
+    maps: MAP_IDS.map((id) => ({ id, name: MAPS[id].name })),
+  });
+
+  socket.on('join', ({ name, loadout }) => {
+    if (!Array.isArray(loadout) || loadout.length !== 2) return;
+    const valid = loadout.every((w) => ['smg', 'sniper', 'pistol', 'grapple'].includes(w));
+    if (!valid || loadout[0] === loadout[1]) return;
+
+    const p = {
+      id: socket.id,
+      name: (name || 'Jogador').slice(0, 16),
+      loadout,
+      kills: 0,
+      deaths: 0,
+      joined: true,
+    };
+    players[socket.id] = p;
+
+    if (game.status === 'playing') {
+      spawnPlayer(p);
+    } else {
+      p.alive = false;
+      p.health = 100;
+      p.weaponKey = loadout[0];
+      p.ammo = freshAmmo(loadout);
+      p.x = 0; p.y = 1.6; p.z = 0; p.rotY = 0;
+    }
+
+    socket.emit('init', {
+      id: socket.id,
+      players,
+      weapons: WEAPONS,
+      game,
+    });
+    socket.broadcast.emit('playerJoined', { id: socket.id, name: p.name });
+    // A primeira partida também começa por uma votação de 15 segundos.
+    if (game.status === 'waiting') startVoting();
+  });
+
+  socket.on('move', (data) => {
+    const p = players[socket.id];
+    if (!p || !p.alive) return;
+    p.x = data.x; p.y = data.y; p.z = data.z; p.rotY = data.rotY;
+  });
+
+  socket.on('switchWeapon', ({ key }) => {
+    const p = players[socket.id];
+    if (!p || !p.alive) return;
+    if (key !== 'knife' && !p.loadout.includes(key)) return;
+    p.weaponKey = key;
+  });
+
+  socket.on('reload', () => {
+    const p = players[socket.id];
+    if (!p || !p.alive) return;
+    const w = WEAPONS[p.weaponKey];
+    if (!w || w.maxAmmo === Infinity) return;
+    if (Date.now() < p.reloadingUntil) return;
+    p.reloadingUntil = Date.now() + w.reloadTime;
+    setTimeout(() => {
+      if (players[socket.id] && players[socket.id].alive) {
+        players[socket.id].ammo[p.weaponKey] = w.maxAmmo;
+        io.to(socket.id).emit('ammoUpdate', { ammo: players[socket.id].ammo });
+      }
+    }, w.reloadTime);
+  });
+
+  socket.on('grapple', ({ x, y, z }) => {
+    const p = players[socket.id];
+    if (!p || !p.alive || game.status !== 'playing') return;
+    const now = Date.now();
+    if (now - (p.lastShot || 0) < WEAPONS.grapple.fireRate) return;
+    p.lastShot = now;
+    socket.broadcast.emit('grappleUsed', { id: socket.id, x, y, z });
+  });
+
+  socket.on('shoot', ({ targetId, isHead }) => {
+    const shooter = players[socket.id];
+    const target = players[targetId];
+    if (!shooter || !shooter.alive || game.status !== 'playing') return;
+    if (!target || !target.alive) return;
+
+    const w = WEAPONS[shooter.weaponKey];
+    if (!w || w.isUtility) return;
+
+    const now = Date.now();
+    if (now < shooter.reloadingUntil) return;
+    if (now - (shooter.lastShot || 0) < w.fireRate) return;
+    if (w.maxAmmo !== Infinity) {
+      if (shooter.ammo[shooter.weaponKey] <= 0) return;
+      shooter.ammo[shooter.weaponKey] -= 1;
+      io.to(socket.id).emit('ammoUpdate', { ammo: shooter.ammo });
+    }
+    shooter.lastShot = now;
+
+    const dmg = isHead ? w.dmgHead : w.dmgBody;
+    target.health -= dmg;
+
+    if (target.health <= 0) {
+      shooter.kills += 1;
+      target.deaths += 1;
+      target.alive = false;
+      io.emit('killFeed', {
+        killerName: shooter.name,
+        victimName: target.name,
+        weapon: w.name,
+        headshot: !!isHead,
+      });
+      io.emit('playerDied', { id: targetId, killerId: socket.id });
+      setTimeout(() => {
+        if (players[targetId] && game.status === 'playing') {
+          spawnPlayer(players[targetId]);
+          io.to(targetId).emit('respawned', {
+            x: players[targetId].x, y: players[targetId].y, z: players[targetId].z,
+            ammo: players[targetId].ammo, weaponKey: players[targetId].weaponKey,
+          });
+        }
+      }, RESPAWN_DELAY);
+    } else {
+      io.emit('playerDamaged', { id: targetId, health: target.health });
+    }
+  });
+
+  socket.on('vote', ({ mapId }) => {
+    if (game.status !== 'voting') return;
+    if (!game.voteOptions.includes(mapId)) return;
+    game.votes[socket.id] = mapId;
+  });
+
+  socket.on('disconnect', () => {
+    delete players[socket.id];
+    io.emit('playerLeft', socket.id);
+  });
+});
+
+server.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT} (pronto para hospedagem v8)`);
+  console.log(`Para jogar na mesma rede: ${LAN_URL}`);
+});

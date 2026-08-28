@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<title>FFA FPS</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- TELA DE ENTRADA / LOADOUT -->
+<div id="loadoutScreen" class="overlay">
+  <div class="panel">
+    <h1>⚔️ FFA FPS</h1>
+    <label>Seu nome</label>
+    <input id="nameInput" maxlength="16" placeholder="Jogador" />
+
+    <label>Escolha 2 armas (a faca você já tem sempre)</label>
+    <div id="weaponPicker" class="weaponPicker"></div>
+
+    <button id="joinBtn" disabled>Entrar na partida</button>
+    <div id="inviteBox" class="inviteBox">
+      <span>Convide jogadores na mesma rede:</span>
+      <code id="inviteUrl">Inicie o servidor para gerar o endereço.</code>
+      <button id="copyInviteBtn" type="button">Copiar endereço</button>
+    </div>
+    <p class="hint">WASD move · Mouse mira · Espaço pula (bunny hop!) · Clique atira · R recarrega · G gancho · 1/2/3 troca de arma</p>
+  </div>
+</div>
+
+<!-- HUD -->
+<div id="hud" class="hidden">
+  <div id="crosshair"></div>
+
+  <div id="topBar">
+    <div id="timerWrap"><span>Tempo da partida</span><div id="timer">5:00</div></div>
+    <div id="mapName"></div>
+    <div id="networkStatus">Conectando...</div>
+  </div>
+
+  <div id="bottomLeft">
+    <div id="healthWrap">
+      <div id="healthBar"><div id="healthFill"></div></div>
+      <div id="healthText">100</div>
+    </div>
+    <div id="weaponInfo">
+      <span id="weaponName">-</span>
+      <span id="ammoCount">-</span>
+    </div>
+  </div>
+
+  <div id="killfeed"></div>
+
+  <div id="hitmarker"></div>
+
+  <div id="scoreboardMini">
+    <h4>Placar (segure TAB)</h4>
+    <div id="scoreRowsMini"></div>
+  </div>
+</div>
+
+<!-- TELA DE FIM DE PARTIDA -->
+<div id="endScreen" class="overlay hidden">
+  <div class="panel">
+    <h1>🏁 Fim de Partida</h1>
+    <table id="finalScoreTable">
+      <thead><tr><th>Jogador</th><th>Kills</th><th>Mortes</th></tr></thead>
+      <tbody id="finalScoreBody"></tbody>
+    </table>
+    <p class="hint">Próxima votação de mapa começando...</p>
+  </div>
+</div>
+
+<!-- TELA DE VOTAÇÃO DE MAPA -->
+<div id="voteScreen" class="overlay hidden">
+  <div class="panel">
+    <h1>🗺️ Vote no próximo mapa</h1>
+    <div id="voteOptions" class="voteOptions"></div>
+    <div id="voteTimer"></div>
+  </div>
+</div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
+<!-- O parâmetro de versão impede que o navegador mantenha uma versão antiga do jogo em cache. -->
+<script src="constants.js?v=7"></script>
+<script src="maps.js?v=7"></script>
+<script src="game.js?v=7"></script>
+</body>
+</html>

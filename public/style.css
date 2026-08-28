@@ -1,0 +1,118 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; overflow: hidden; background: #111; font-family: 'Segoe UI', Arial, sans-serif; }
+canvas { display: block; }
+.hidden { display: none !important; }
+
+.overlay {
+  position: fixed; inset: 0; background: rgba(10, 12, 16, 0.92);
+  display: flex; align-items: center; justify-content: center; z-index: 200;
+  color: #eee;
+}
+.panel {
+  background: #1a1d24; border: 1px solid #333; border-radius: 10px;
+  padding: 28px 34px; width: 460px; max-width: 92vw; text-align: center;
+}
+.panel h1 { margin-top: 0; color: #4ade80; }
+.panel label { display: block; text-align: left; margin: 14px 0 6px; font-size: 13px; color: #aaa; }
+.panel input {
+  width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #333;
+  background: #0f1115; color: #eee; font-size: 15px;
+}
+.hint { font-size: 12px; color: #888; margin-top: 16px; line-height: 1.6; }
+
+.weaponPicker { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.weaponOption {
+  border: 2px solid #333; border-radius: 8px; padding: 10px; cursor: pointer;
+  background: #0f1115; transition: 0.15s;
+}
+.weaponOption:hover { border-color: #4ade80; }
+.weaponOption.selected { border-color: #4ade80; background: #16281f; }
+.weaponOption .wName { font-weight: bold; }
+.weaponOption .wStat { font-size: 11px; color: #999; }
+
+#joinBtn {
+  margin-top: 18px; width: 100%; padding: 12px; border: none; border-radius: 8px;
+  background: #4ade80; color: #0f1115; font-weight: bold; font-size: 16px; cursor: pointer;
+}
+#joinBtn:disabled { background: #333; color: #777; cursor: not-allowed; }
+.inviteBox { margin-top: 16px; padding: 10px; border: 1px solid #334155; border-radius: 7px; background: #101721; color: #aab4c2; font-size: 12px; }
+.inviteBox span, .inviteBox code { display: block; }
+.inviteBox code { margin: 6px 0; color: #4ade80; overflow-wrap: anywhere; }
+#copyInviteBtn { border: 1px solid #4ade80; border-radius: 5px; padding: 5px 9px; background: transparent; color: #4ade80; cursor: pointer; font-size: 12px; }
+
+#crosshair {
+  position: fixed; top: 50%; left: 50%; width: 26px; height: 26px;
+  transform: translate(-50%, -50%); pointer-events: none; z-index: 10;
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+#crosshair::before, #crosshair::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(#fff, #fff) center top / 2px 7px no-repeat,
+              linear-gradient(#fff, #fff) center bottom / 2px 7px no-repeat,
+              linear-gradient(#fff, #fff) left center / 7px 2px no-repeat,
+              linear-gradient(#fff, #fff) right center / 7px 2px no-repeat;
+  filter: drop-shadow(0 0 2px #000);
+}
+#crosshair::after { width: 4px; height: 4px; inset: 11px; border-radius: 50%; background: #fff; }
+#crosshair.aiming { transform: translate(-50%, -50%) scale(0.62); }
+#crosshair.aiming::before { background: linear-gradient(#4ade80, #4ade80) center top / 2px 9px no-repeat, linear-gradient(#4ade80, #4ade80) center bottom / 2px 9px no-repeat, linear-gradient(#4ade80, #4ade80) left center / 9px 2px no-repeat, linear-gradient(#4ade80, #4ade80) right center / 9px 2px no-repeat; }
+#crosshair.aiming::after { background: #4ade80; }
+
+#topBar {
+  position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 14px; align-items: center; z-index: 10; color: #eee;
+  text-shadow: 1px 1px 2px #000;
+}
+#timerWrap { min-width: 128px; padding: 7px 14px; border: 1px solid #4ade80; border-radius: 8px; background: rgba(8, 20, 13, 0.82); text-align: center; }
+#timerWrap span { display: block; color: #9ca3af; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+#timer { color: #fff; font-size: 25px; font-weight: 800; line-height: 1.05; }
+#mapName { padding: 8px 11px; border-radius: 6px; background: rgba(0, 0, 0, 0.42); font-size: 13px; color: #ddd; }
+#networkStatus { padding: 6px 9px; border-radius: 5px; background: rgba(0, 0, 0, 0.42); color: #aab4c2; font-size: 11px; }
+#networkStatus.websocket { color: #4ade80; }
+#networkStatus.polling { color: #facc15; }
+
+#bottomLeft { position: fixed; bottom: 20px; left: 20px; z-index: 10; color: #eee; text-shadow: 1px 1px 2px #000; }
+#healthWrap { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+#healthBar { width: 180px; height: 14px; background: #333; border: 1px solid #555; border-radius: 3px; overflow: hidden; }
+#healthFill { height: 100%; width: 100%; background: linear-gradient(90deg, #e33, #f66); transition: width 0.15s; }
+#healthText { font-weight: bold; font-size: 18px; }
+#weaponInfo { font-size: 15px; display: flex; gap: 10px; }
+#ammoCount { color: #4ade80; font-weight: bold; }
+
+#killfeed { position: fixed; top: 60px; right: 20px; z-index: 10; font-size: 13px; color: #eee; max-width: 280px; text-align: right; }
+#killfeed div { background: rgba(0,0,0,0.45); padding: 4px 10px; margin-bottom: 3px; border-radius: 4px; }
+
+#hitmarker {
+  position: fixed; top: 50%; left: 50%; width: 24px; height: 24px;
+  transform: translate(-50%, -50%); pointer-events: none; z-index: 11; opacity: 0;
+}
+#hitmarker.show {
+  opacity: 1;
+  background: linear-gradient(45deg, transparent 45%, #fff 45%, #fff 55%, transparent 55%),
+              linear-gradient(-45deg, transparent 45%, #fff 45%, #fff 55%, transparent 55%);
+}
+#hitmarker.headshot { background: linear-gradient(45deg, transparent 45%, #f33 45%, #f33 55%, transparent 55%), linear-gradient(-45deg, transparent 45%, #f33 45%, #f33 55%, transparent 55%); }
+
+#scoreboardMini {
+  position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,0.75); padding: 12px 18px; border-radius: 8px;
+  color: #eee; z-index: 15; min-width: 260px; display: none;
+}
+#scoreboardMini.show { display: block; }
+#scoreboardMini h4 { margin: 0 0 8px; color: #4ade80; font-size: 13px; }
+.scoreRow { display: flex; justify-content: space-between; font-size: 13px; padding: 2px 0; }
+
+table#finalScoreTable { width: 100%; border-collapse: collapse; margin-top: 12px; }
+table#finalScoreTable th, table#finalScoreTable td { padding: 8px; border-bottom: 1px solid #333; text-align: left; }
+table#finalScoreTable th { color: #4ade80; }
+
+.voteOptions { display: flex; flex-direction: column; gap: 10px; margin: 18px 0; }
+.voteOption {
+  border: 2px solid #333; border-radius: 8px; padding: 14px; cursor: pointer; background: #0f1115;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.voteOption:hover { border-color: #4ade80; }
+.voteOption.voted { border-color: #4ade80; background: #16281f; }
+#voteTimer { font-size: 14px; color: #aaa; }
+
+.nameTag { position: fixed; color: #fff; font-size: 12px; transform: translate(-50%, -100%); text-shadow: 1px 1px 2px #000; pointer-events: none; z-index: 5; }
