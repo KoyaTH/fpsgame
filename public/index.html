@@ -18,6 +18,7 @@
     <div id="weaponPicker" class="weaponPicker"></div>
 
     <button id="joinBtn" disabled>Entrar na partida</button>
+    <button id="openSettingsLobbyBtn" type="button" class="settingsOpenBtn">⚙️ Configurações de Mira e Teclas</button>
     <div id="inviteBox" class="inviteBox">
       <span>Convide jogadores na mesma rede:</span>
       <code id="inviteUrl">Inicie o servidor para gerar o endereço.</code>
@@ -31,17 +32,37 @@
 <div id="hud" class="hidden">
   <div id="crosshair"></div>
   <div id="damageFlash"></div>
+  <div id="lowHealthVignette"></div>
+  <div id="damageIndicatorWrap"></div>
+
+  <!-- OVERLAY DA MIRA DA SNIPER -->
+  <div id="sniperScope" class="hidden">
+    <div class="scopeBlackout"></div>
+    <div class="scopeCenter">
+      <div class="scopeCrossHorizontal"></div>
+      <div class="scopeCrossVertical"></div>
+      <div class="scopeCircle"></div>
+      <div class="scopeTicks"></div>
+      <div class="scopeDot"></div>
+    </div>
+  </div>
 
   <div id="topBar">
     <div id="timerWrap"><span>Tempo da partida</span><div id="timer">5:00</div></div>
     <div id="mapName"></div>
     <div id="networkStatus">Conectando...</div>
+    <button id="openLoadoutHudBtn" type="button" title="Trocar Armas (Tecla B)">🎒 Trocar Armas</button>
+    <button id="openSettingsHudBtn" type="button" title="Configurações (Sensibilidade & Teclas)">⚙️ Config</button>
   </div>
 
   <div id="bottomLeft">
     <div id="healthWrap">
-      <div id="healthBar"><div id="healthFill"></div></div>
+      <div id="healthBar">
+        <div id="healthFill"></div>
+        <div id="regenEffect"></div>
+      </div>
       <div id="healthText">100</div>
+      <div id="healIndicator" class="hidden">+REGEN</div>
     </div>
     <div id="weaponInfo">
       <span id="weaponName">-</span>
@@ -80,12 +101,154 @@
   </div>
 </div>
 
+<!-- MODAL DE TROCA DE ARMAS EM JOGO -->
+<div id="changeLoadoutModal" class="overlay hidden">
+  <div class="panel">
+    <div class="settingsHeader">
+      <h2>🎒 Trocar Armas do Loadout</h2>
+      <button id="closeLoadoutXBtn" class="closeIconBtn" type="button">✕</button>
+    </div>
+    <p class="hint" style="margin-top:0;margin-bottom:14px;text-align:left;">
+      Selecione 2 armas para equipar imediatamente durante a partida:
+    </p>
+    <div id="inGameWeaponPicker" class="weaponPicker"></div>
+    <div class="settingsFooter" style="margin-top:16px;">
+      <button id="cancelLoadoutBtn" class="secondaryBtn" type="button">Cancelar</button>
+      <button id="confirmLoadoutBtn" class="primaryBtn" type="button" disabled>Confirmar e Equipar</button>
+    </div>
+  </div>
+</div>
+
+<!-- TELA DE CONFIGURAÇÕES -->
+<div id="settingsModal" class="overlay hidden">
+  <div class="panel settingsPanel">
+    <div class="settingsHeader">
+      <h2>⚙️ Configurações</h2>
+      <button id="closeSettingsXBtn" class="closeIconBtn" type="button">✕</button>
+    </div>
+
+    <div class="settingsTabs">
+      <button id="tabMouseBtn" class="tabBtn active" type="button">🎯 Sensibilidade do Mouse</button>
+      <button id="tabKeysBtn" class="tabBtn" type="button">⌨️ Teclas e Atalhos</button>
+    </div>
+
+    <!-- ABA DE SENSIBILIDADE DO MOUSE -->
+    <div id="tabMouseContent" class="tabContent">
+      <div class="settingsSection">
+        <h3>Sensibilidade Geral (Sem Mira / Hipfire)</h3>
+        <div class="settingRow">
+          <label for="sensXRange">Eixo X (Horizontal):</label>
+          <div class="rangeWrap">
+            <input type="range" id="sensXRange" min="0.1" max="5.0" step="0.05" value="1.0" />
+            <input type="number" id="sensXNum" min="0.1" max="5.0" step="0.05" value="1.0" />
+          </div>
+        </div>
+        <div class="settingRow">
+          <label for="sensYRange">Eixo Y (Vertical):</label>
+          <div class="rangeWrap">
+            <input type="range" id="sensYRange" min="0.1" max="5.0" step="0.05" value="1.0" />
+            <input type="number" id="sensYNum" min="0.1" max="5.0" step="0.05" value="1.0" />
+          </div>
+        </div>
+      </div>
+
+      <div class="settingsSection">
+        <h3>Sensibilidade Com Mira (ADS / Sniper & Zoom)</h3>
+        <div class="settingRow">
+          <label for="sensAimXRange">Eixo X com Mira (Horizontal):</label>
+          <div class="rangeWrap">
+            <input type="range" id="sensAimXRange" min="0.1" max="5.0" step="0.05" value="0.75" />
+            <input type="number" id="sensAimXNum" min="0.1" max="5.0" step="0.05" value="0.75" />
+          </div>
+        </div>
+        <div class="settingRow">
+          <label for="sensAimYRange">Eixo Y com Mira (Vertical):</label>
+          <div class="rangeWrap">
+            <input type="range" id="sensAimYRange" min="0.1" max="5.0" step="0.05" value="0.75" />
+            <input type="number" id="sensAimYNum" min="0.1" max="5.0" step="0.05" value="0.75" />
+          </div>
+        </div>
+      </div>
+
+      <div class="settingsSection">
+        <label class="checkboxLabel">
+          <input type="checkbox" id="invertYCheck" />
+          <span>Inverter Eixo Y (Olhar vertical invertido)</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- ABA DE MAPEAMENTO DE TECLAS -->
+    <div id="tabKeysContent" class="tabContent hidden">
+      <p class="keybindHelp">Clique no botão da ação para alterar a tecla correspondente.</p>
+      <div class="keybindGrid">
+        <div class="keybindItem">
+          <span>Mover para Frente</span>
+          <button class="keybindBtn" data-action="forward" type="button">W</button>
+        </div>
+        <div class="keybindItem">
+          <span>Mover para Trás</span>
+          <button class="keybindBtn" data-action="back" type="button">S</button>
+        </div>
+        <div class="keybindItem">
+          <span>Mover para Esquerda</span>
+          <button class="keybindBtn" data-action="left" type="button">A</button>
+        </div>
+        <div class="keybindItem">
+          <span>Mover para Direita</span>
+          <button class="keybindBtn" data-action="right" type="button">D</button>
+        </div>
+        <div class="keybindItem">
+          <span>Pular / Bunny Hop</span>
+          <button class="keybindBtn" data-action="jump" type="button">Espaço</button>
+        </div>
+        <div class="keybindItem">
+          <span>Recarregar</span>
+          <button class="keybindBtn" data-action="reload" type="button">R</button>
+        </div>
+        <div class="keybindItem">
+          <span>Arma 1 (Primária)</span>
+          <button class="keybindBtn" data-action="slot1" type="button">1</button>
+        </div>
+        <div class="keybindItem">
+          <span>Arma 2 (Secundária)</span>
+          <button class="keybindBtn" data-action="slot2" type="button">2</button>
+        </div>
+        <div class="keybindItem">
+          <span>Faca (Melee)</span>
+          <button class="keybindBtn" data-action="knife" type="button">3</button>
+        </div>
+        <div class="keybindItem">
+          <span>Gancho Rápido</span>
+          <button class="keybindBtn" data-action="grapple" type="button">G</button>
+        </div>
+        <div class="keybindItem">
+          <span>Trocar Armas (Loadout)</span>
+          <button class="keybindBtn" data-action="loadout" type="button">B</button>
+        </div>
+        <div class="keybindItem">
+          <span>Placar de Pontos</span>
+          <button class="keybindBtn" data-action="score" type="button">Tab</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- BOTÕES DO MODAL -->
+    <div class="settingsFooter">
+      <button id="resetSettingsBtn" class="dangerBtn" type="button">Restaurar Padrões</button>
+      <div class="settingsRightActions">
+        <button id="saveSettingsBtn" class="primaryBtn" type="button">Salvar e Fechar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
 <script src="https://unpkg.com/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
 <!-- O parâmetro de versão impede que o navegador mantenha uma versão antiga do jogo em cache. -->
-<script src="constants.js?v=9"></script>
-<script src="maps.js?v=9"></script>
-<script src="game.js?v=9"></script>
+<script src="constants.js?v=10"></script>
+<script src="maps.js?v=10"></script>
+<script src="game.js?v=10"></script>
 </body>
 </html>

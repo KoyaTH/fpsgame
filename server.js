@@ -74,6 +74,8 @@ const MATCH_DURATION = 5 * 60; // 5 minutos em segundos
 const VOTE_DURATION = 15;
 const END_SCREEN_DURATION = 6;
 const RESPAWN_DELAY = 3000;
+const REGEN_DELAY_MS = 17000; // 17 segundos sem tomar dano para regenerar vida
+const REGEN_PER_SECOND = 10; // Recupera 10 de vida por segundo
 
 const game = {
   status: 'waiting', // 'waiting' | 'playing' | 'ended' | 'voting'
@@ -107,6 +109,7 @@ function spawnPlayer(p) {
   p.weaponKey = p.loadout[0];
   p.ammo = freshAmmo(p.loadout);
   p.lastShot = 0;
+  p.lastDamageTime = Date.now();
   p.reloadingUntil = 0;
 }
 
@@ -173,6 +176,16 @@ setInterval(() => {
     game.timeLeft -= 1;
     io.emit('matchTime', { timeLeft: game.timeLeft });
     if (game.timeLeft <= 0) endMatch();
+
+    // Regeneração de vida após 17 segundos sem tomar dano
+    const now = Date.now();
+    for (const id in players) {
+      const p = players[id];
+      if (p.joined && p.alive && p.health < 100 && (now - (p.lastDamageTime || 0) >= REGEN_DELAY_MS)) {
+        p.health = Math.min(100, p.health + REGEN_PER_SECOND);
+        io.emit('playerHealed', { id: p.id, health: p.health });
+      }
+    }
   } else if (game.status === 'voting') {
     game.timeLeft -= 1;
     io.emit('voteTime', { timeLeft: game.timeLeft });
@@ -254,6 +267,26 @@ io.on('connection', (socket) => {
     p.weaponKey = key;
   });
 
+  socket.on('changeLoadout', ({ loadout }) => {
+    const p = players[socket.id];
+    if (!p) return;
+    if (!Array.isArray(loadout) || loadout.length !== 2) return;
+    const valid = loadout.every((w) => ['smg', 'sniper', 'pistol', 'grapple'].includes(w));
+    if (!valid || loadout[0] === loadout[1]) return;
+
+    p.loadout = loadout;
+    p.ammo = freshAmmo(loadout);
+    if (p.weaponKey !== 'knife' && !loadout.includes(p.weaponKey)) {
+      p.weaponKey = loadout[0];
+    }
+
+    socket.emit('loadoutChanged', {
+      loadout: p.loadout,
+      weaponKey: p.weaponKey,
+      ammo: p.ammo,
+    });
+  });
+
   socket.on('reload', () => {
     const p = players[socket.id];
     if (!p || !p.alive) return;
@@ -278,11 +311,9 @@ io.on('connection', (socket) => {
     socket.broadcast.emit('grappleUsed', { id: socket.id, x, y, z });
   });
 
-  socket.on('shoot', ({ targetId, isHead }) => {
+  socket.on('shoot', ({ targetId, isHead, hitPos }) => {
     const shooter = players[socket.id];
-    const target = players[targetId];
     if (!shooter || !shooter.alive || game.status !== 'playing') return;
-    if (!target || !target.alive) return;
 
     const w = WEAPONS[shooter.weaponKey];
     if (!w || w.isUtility) return;
@@ -297,8 +328,21 @@ io.on('connection', (socket) => {
     }
     shooter.lastShot = now;
 
+    // Transmite o tiro e trajetória para todos os outros jogadores (bullet tracer / muzzle flash)
+    socket.broadcast.emit('playerShot', {
+      id: socket.id,
+      weaponKey: shooter.weaponKey,
+      origin: { x: shooter.x, y: shooter.y + 1.2, z: shooter.z },
+      hitPos: hitPos || null,
+      isHead: !!isHead,
+    });
+
+    const target = targetId ? players[targetId] : null;
+    if (!target || !target.alive) return;
+
     const dmg = isHead ? w.dmgHead : w.dmgBody;
     target.health -= dmg;
+    target.lastDamageTime = now;
 
     if (target.health <= 0) {
       shooter.kills += 1;
@@ -315,6 +359,7 @@ io.on('connection', (socket) => {
         killerId: socket.id,
         damage: dmg,
         headshot: !!isHead,
+        attackerPos: { x: shooter.x, y: shooter.y, z: shooter.z },
       });
       setTimeout(() => {
         if (players[targetId] && game.status === 'playing') {
@@ -322,6 +367,7 @@ io.on('connection', (socket) => {
           io.to(targetId).emit('respawned', {
             x: players[targetId].x, y: players[targetId].y, z: players[targetId].z,
             ammo: players[targetId].ammo, weaponKey: players[targetId].weaponKey,
+            health: players[targetId].health,
           });
         }
       }, RESPAWN_DELAY);
@@ -332,6 +378,7 @@ io.on('connection', (socket) => {
         attackerId: socket.id,
         damage: dmg,
         headshot: !!isHead,
+        attackerPos: { x: shooter.x, y: shooter.y, z: shooter.z },
       });
     }
   });
@@ -349,6 +396,6 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Servidor rodando na porta ${PORT} (mapas sincronizados e feedback v9)`);
+  console.log(`Servidor rodando na porta ${PORT}`);
   console.log(`Para jogar na mesma rede: ${LAN_URL}`);
 });
