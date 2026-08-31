@@ -34,6 +34,11 @@ canvas { display: block; }
   margin-top: 18px; width: 100%; padding: 12px; border: none; border-radius: 8px;
   background: #4ade80; color: #0f1115; font-weight: bold; font-size: 16px; cursor: pointer;
 }
+#respawnBtn {
+  margin-top: 18px; width: 100%; padding: 12px; border: none; border-radius: 8px;
+  background: #4ade80; color: #0f1115; font-weight: bold; font-size: 16px; cursor: pointer;
+}
+
 #joinBtn:disabled { background: #333; color: #777; cursor: not-allowed; }
 .inviteBox { margin-top: 16px; padding: 10px; border: 1px solid #334155; border-radius: 7px; background: #101721; color: #aab4c2; font-size: 12px; }
 .inviteBox span, .inviteBox code { display: block; }
@@ -258,6 +263,17 @@ table#finalScoreTable th { color: #4ade80; }
 .nameTag { position: fixed; min-width: 74px; transform: translate(-50%, -100%); text-align: center; color: #fff; font-size: 12px; font-weight: 700; text-shadow: 1px 1px 2px #000; pointer-events: none; z-index: 5; }
 .enemyHealth { width: 74px; height: 6px; margin-top: 4px; border: 1px solid rgba(0, 0, 0, 0.7); border-radius: 4px; overflow: hidden; background: rgba(0, 0, 0, 0.6); }
 .enemyHealthFill { height: 100%; background: linear-gradient(90deg, #ef4444, #4ade80); }
+
+/* TELA DE MORTE */
+#deathScreen { z-index: 150; background: rgba(8, 4, 4, 0.88); }
+.deathPanel h1 { color: #ef4444; font-size: 28px; margin-bottom: 8px; }
+.deathKiller { font-size: 15px; color: #ccc; margin: 0 0 20px; }
+.deathKiller span { color: #f87171; font-weight: 700; }
+.deathCountdown {
+  font-size: 64px; font-weight: 800; color: #ef4444;
+  line-height: 1; margin: 12px 0 16px;
+  text-shadow: 0 0 24px rgba(239, 68, 68, 0.5);
+}
 
 /* ==========================================================================
    CONFIGURAÇÕES (MODAL, SENSIBILIDADE E KEYBINDS)

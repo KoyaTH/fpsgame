@@ -30,6 +30,7 @@ let rightArmPivot;
 let weaponKick = 0;
 let voteTimerInterval = null;
 let cameraShake = 0;
+let deathCountdownInterval = null;
 
 let cameraPitch = 0; // rotação vertical (X)
 let cameraYaw = 0;   // rotação horizontal (Y)
@@ -62,6 +63,7 @@ const DEFAULT_SETTINGS = {
     knife: 'Digit3',
     grapple: 'KeyG',
     loadout: 'KeyB',
+    reset: 'KeyP',
     score: 'Tab'
   }
 };
@@ -80,13 +82,13 @@ function loadSavedSettings() {
         keybinds: { ...DEFAULT_SETTINGS.keybinds, ...(parsed.keybinds || {}) }
       };
     }
-  } catch (e) {}
+  } catch (e) { }
 }
 
 function saveSettings() {
   try {
     localStorage.setItem('fps_game_settings', JSON.stringify(userSettings));
-  } catch (e) {}
+  } catch (e) { }
 }
 
 function formatKeyCode(code) {
@@ -823,12 +825,13 @@ function buildPlayerMesh(color) {
 function addRemotePlayer(p) {
   if (remotePlayers[p.id]) return;
   const pm = buildPlayerMesh(colorFromId(p.id));
-  pm.group.position.set(p.x || 0, 0, p.z || 0);
+  const spawnY = (p.y || 1.6) - PLAYER_HEIGHT;
+  pm.group.position.set(p.x || 0, spawnY, p.z || 0);
   scene.add(pm.group);
   remotePlayers[p.id] = {
     ...pm,
-    targetPos: new THREE.Vector3(p.x || 0, 0, p.z || 0),
-    targetRotY: 0,
+    targetPos: new THREE.Vector3(p.x || 0, spawnY, p.z || 0),
+    targetRotY: p.rotY || 0,
     data: p,
     animTime: 0,
     flashTimeout: null,
@@ -930,7 +933,8 @@ function connectSocket(name) {
       if (id === myId) continue;
       if (!remotePlayers[id]) addRemotePlayer(snapshot[id]);
       const rp = remotePlayers[id];
-      rp.targetPos.set(snapshot[id].x, 0, snapshot[id].z);
+      const feetY = (snapshot[id].y || 1.6) - PLAYER_HEIGHT;
+      rp.targetPos.set(snapshot[id].x, feetY, snapshot[id].z);
       rp.targetRotY = snapshot[id].rotY;
       if (rp.data.weaponKey !== snapshot[id].weaponKey) {
         rp.updateHeldWeapon(snapshot[id].weaponKey);
@@ -998,7 +1002,7 @@ function connectSocket(name) {
     if (remotePlayers[id]) remotePlayers[id].data.health = health;
   });
 
-  socket.on('playerDied', ({ id, killerId, damage, headshot, attackerPos }) => {
+  socket.on('playerDied', ({ id, killerId, killerName, damage, headshot, attackerPos }) => {
     if (id === myId) {
       myAlive = false;
       myHealth = 0;
@@ -1007,6 +1011,41 @@ function connectSocket(name) {
       setRegenActive(false);
       detachGrapple(false);
       showDirectionalDamageIndicator(attackerPos);
+
+      // Show death screen with 5s countdown
+      const deathScreen = document.getElementById('deathScreen');
+      const killerNameEl = document.getElementById('deathKillerName');
+      const respawnBtn = document.getElementById('respawnBtn');
+      if (deathScreen && killerNameEl && respawnBtn) {
+        killerNameEl.textContent = killerName || '—';
+        deathScreen.classList.remove('hidden');
+        let count = 5;
+        const el = document.getElementById('deathCountdown');
+        if (el) el.textContent = count;
+        deathCountdownInterval = setInterval(() => {
+          count -= 1;
+          if (el) el.textContent = count;
+          if (count <= 0) {
+            clearInterval(deathCountdownInterval);
+            deathCountdownInterval = null;
+          }
+        }, 1000);
+
+        respawnBtn.onclick = () => {
+          count = 0;
+          if (el) el.textContent = count;
+
+          clearInterval(deathCountdownInterval);
+          deathCountdownInterval = null;
+
+          // Esconde a tela de morte imediatamente
+          deathScreen.classList.add('hidden');
+
+          // AVISA O SERVIDOR: "Quero reviver"
+          socket.emit('requestInstantRespawn');
+        };
+
+      }
     }
     if (remotePlayers[id]) {
       flashPlayerRed(remotePlayers[id]);
@@ -1016,6 +1055,7 @@ function connectSocket(name) {
       showDamageNumber(id, damage, !!headshot, true);
       playHitmarkerSound(true);
     }
+    // console.log(" Player died: ", id, " Killer: ", killerId, " Damage: ", damage, " Headshot: ", headshot, " attackerPos: ", attackerPos);
   });
 
   socket.on('respawned', ({ x, y, z, ammo, weaponKey, health, rotY }) => {
@@ -1032,6 +1072,15 @@ function connectSocket(name) {
     updateWeaponHUD();
     updateWeaponModel();
     updateHealthHUD();
+
+    // Hide death screen and clear interval
+    const deathScreen = document.getElementById('deathScreen');
+    if (deathScreen) deathScreen.classList.add('hidden');
+    if (deathCountdownInterval) {
+      clearInterval(deathCountdownInterval);
+      deathCountdownInterval = null;
+    }
+    if (gameStatus === 'playing') controls.lock();
   });
 
   socket.on('killFeed', ({ killerName, victimName, weapon, headshot }) => {
@@ -1298,7 +1347,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
-  // Se o modal de configurações estiver aberto, fecha com Esc
+  // Se o modal de config estiver aberto, fecha com Esc
   const settingsModal = document.getElementById('settingsModal');
   if (settingsModal && !settingsModal.classList.contains('hidden')) {
     if (e.code === 'Escape') {
@@ -1308,10 +1357,10 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
-  // Se o modal de trocar armas estiver aberto, fecha com Esc ou tecla de Loadout
+  // Se o modal de trocar armas estiver aberto, fecha com Esc
   const loadoutModal = document.getElementById('changeLoadoutModal');
   if (loadoutModal && !loadoutModal.classList.contains('hidden')) {
-    if (e.code === 'Escape' || e.code === userSettings.keybinds.loadout) {
+    if (e.code === 'Escape') {
       toggleInGameWeaponSelect(false);
       if (myAlive) controls.lock();
     }
@@ -1319,6 +1368,8 @@ document.addEventListener('keydown', (e) => {
   }
 
   const kb = userSettings.keybinds;
+  const isLoadoutKey = kb.loadout && e.code === kb.loadout;
+  const isGrappleKey = kb.grapple && e.code === kb.grapple;
   if (e.code === kb.forward) move.forward = true;
   else if (e.code === kb.back) move.back = true;
   else if (e.code === kb.left) move.left = true;
@@ -1329,15 +1380,32 @@ document.addEventListener('keydown', (e) => {
   else if (e.code === kb.slot2) trySwitchWeapon(1);
   else if (e.code === kb.knife) trySwitchWeapon('knife');
   else if (e.code === kb.grapple) tryGrappleSwitch();
+  else if (e.code === kb.reset) tryReset(myId);
   else if (e.code === kb.loadout) {
     e.preventDefault();
-    toggleInGameWeaponSelect();
-  } else if (e.code === kb.score) {
+    document.getElementById('changeLoadoutModal').classList.remove('hidden');
+    controls.unlock();
+    // toggleInGameWeaponSelect(true);
+  }
+  else if (e.code === kb.score) {
     e.preventDefault();
     tabHeld = true;
     document.getElementById('scoreboardMini').classList.add('show');
   }
 });
+
+function tryReset(id) {
+  // console.log("ta chegando aqui?, id: ", id)
+  socket.emit('playerDied', {
+    id: id,
+    killerId: id,
+    killerName: 'Reset',
+    damage: 101,
+    headshot: false,
+    attackerPos: { x: 0, y: 0, z: 0 },
+  });
+  showDamageNumber(id, 101, false, true);
+}
 
 document.addEventListener('keyup', (e) => {
   if (rebindingAction) return;
@@ -1826,7 +1894,7 @@ function playGrappleSound() {
     osc.connect(gain).connect(ctx.destination);
     osc.start();
     osc.stop(ctx.currentTime + 0.17);
-  } catch (e) {}
+  } catch (e) { }
 }
 
 function playShotSound(w, volume = 0.08) {
@@ -1841,7 +1909,7 @@ function playShotSound(w, volume = 0.08) {
     osc.connect(gain).connect(ctx.destination);
     osc.start();
     osc.stop(ctx.currentTime + (myWeaponKey === 'sniper' ? 0.23 : 0.11));
-  } catch (e) {}
+  } catch (e) { }
 }
 
 function playHitmarkerSound(isHeadshot) {
@@ -1857,7 +1925,7 @@ function playHitmarkerSound(isHeadshot) {
     osc.connect(gain).connect(ctx.destination);
     osc.start();
     osc.stop(ctx.currentTime + 0.09);
-  } catch (e) {}
+  } catch (e) { }
 }
 
 function playHurtSound() {
@@ -1873,7 +1941,7 @@ function playHurtSound() {
     osc.connect(gain).connect(ctx.destination);
     osc.start();
     osc.stop(ctx.currentTime + 0.19);
-  } catch (e) {}
+  } catch (e) { }
 }
 
 // =============================================================================

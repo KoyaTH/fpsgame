@@ -32,11 +32,11 @@ app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 // CONFIGURAÇÃO DE ARMAS (precisa bater com public/game.js)
 // ---------------------------------------------------------------------------
 const WEAPONS = {
-  smg:     { name: 'Metralhadora', maxAmmo: 30, dmgBody: 18, dmgHead: 36,  fireRate: 110,  reloadTime: 2000, auto: true },
-  sniper:  { name: 'Sniper',       maxAmmo: 3,  dmgBody: 60, dmgHead: 999, fireRate: 1100, reloadTime: 2600, auto: false },
-  pistol:  { name: 'Pistolinha',   maxAmmo: 12, dmgBody: 22, dmgHead: 44,  fireRate: 240,  reloadTime: 1500, auto: false },
+  smg: { name: 'Metralhadora', maxAmmo: 30, dmgBody: 18, dmgHead: 36, fireRate: 110, reloadTime: 2000, auto: true },
+  sniper: { name: 'Sniper', maxAmmo: 3, dmgBody: 60, dmgHead: 100, fireRate: 1100, reloadTime: 2600, auto: false },
+  pistol: { name: 'Pistolinha', maxAmmo: 12, dmgBody: 22, dmgHead: 44, fireRate: 240, reloadTime: 1500, auto: false },
   grapple: { name: 'Grappling Hook', maxAmmo: Infinity, dmgBody: 0, dmgHead: 0, fireRate: 550, reloadTime: 0, auto: false, isUtility: true },
-  knife:   { name: 'Faca',         maxAmmo: Infinity, dmgBody: 40, dmgHead: 80, fireRate: 450, reloadTime: 0, auto: false, isMelee: true },
+  knife: { name: 'Faca', maxAmmo: Infinity, dmgBody: 40, dmgHead: 80, fireRate: 450, reloadTime: 0, auto: false, isMelee: true },
 };
 
 // ---------------------------------------------------------------------------
@@ -71,10 +71,10 @@ const MAP_IDS = Object.keys(MAPS);
 // ESTADO DA PARTIDA
 // ---------------------------------------------------------------------------
 const MATCH_DURATION = 5 * 60; // 5 minutos em segundos
-const VOTE_DURATION = 15;
+const VOTE_DURATION = 5;
 const END_SCREEN_DURATION = 6;
-const RESPAWN_DELAY = 3000;
-const REGEN_DELAY_MS = 17000; // 17 segundos sem tomar dano para regenerar vida
+const RESPAWN_DELAY = 5000;
+const REGEN_DELAY_MS = 15000; // 17 segundos sem tomar dano para regenerar vida
 const REGEN_PER_SECOND = 10; // Recupera 10 de vida por segundo
 
 const game = {
@@ -92,6 +92,24 @@ function randomSpawn(mapId) {
   const s = spawns[Math.floor(Math.random() * spawns.length)];
   return { x: s.x, y: 1.6, z: s.z };
 }
+
+function executeRespawn(playerId) {
+  // Se o timer ainda existir, limpa ele para não dar respawn duplicado
+  if (players[playerId] && players[playerId].respawnTimer) {
+    clearTimeout(players[playerId].respawnTimer);
+    players[playerId].respawnTimer = null;
+  }
+
+  if (players[playerId] && game.status === 'playing') {
+    spawnPlayer(players[playerId]);
+    io.to(playerId).emit('respawned', {
+      x: players[playerId].x, y: players[playerId].y, z: players[playerId].z,
+      ammo: players[playerId].ammo, weaponKey: players[playerId].weaponKey,
+      health: players[playerId].health,
+    });
+  }
+}
+
 
 function freshAmmo(loadout) {
   return {
@@ -217,6 +235,33 @@ io.on('connection', (socket) => {
     inviteUrl: LAN_URL,
     maps: MAP_IDS.map((id) => ({ id, name: MAPS[id].name })),
   });
+
+  socket.on('requestInstantRespawn', () => {
+    // console.log(`Jogador ${socket.id} pediu respawn rápido.`);
+    executeRespawn(socket.id);
+  });
+
+  socket.on('playerDied', (data) => {
+    io.emit('playerDied', {
+      id: data.id,
+      killerId: data.killerId,
+      killerName: data.killerName,
+      damage: data.damage,
+      headshot: data.headshot,
+      attackerPos: data.attackerPos,
+    });
+
+    // Salva o timer no objeto do player para podermos cancelar se ele clicar no botão
+    if (players[data.id]) {
+      // Cancela um timer antigo se por acaso existia
+      if (players[data.id].respawnTimer) clearTimeout(players[data.id].respawnTimer);
+
+      players[data.id].respawnTimer = setTimeout(() => {
+        executeRespawn(data.id);
+      }, RESPAWN_DELAY);
+    }
+  });
+
 
   socket.on('join', ({ name, loadout }) => {
     if (!Array.isArray(loadout) || loadout.length !== 2) return;
@@ -354,23 +399,34 @@ io.on('connection', (socket) => {
         weapon: w.name,
         headshot: !!isHead,
       });
-      io.emit('playerDied', {
-        id: targetId,
-        killerId: socket.id,
-        damage: dmg,
-        headshot: !!isHead,
-        attackerPos: { x: shooter.x, y: shooter.y, z: shooter.z },
-      });
-      setTimeout(() => {
-        if (players[targetId] && game.status === 'playing') {
-          spawnPlayer(players[targetId]);
-          io.to(targetId).emit('respawned', {
-            x: players[targetId].x, y: players[targetId].y, z: players[targetId].z,
-            ammo: players[targetId].ammo, weaponKey: players[targetId].weaponKey,
-            health: players[targetId].health,
-          });
+      if (target.health <= 0) {
+        shooter.kills += 1;
+        target.deaths += 1;
+        target.alive = false;
+        io.emit('killFeed', {
+          killerName: shooter.name,
+          victimName: target.name,
+          weapon: w.name,
+          headshot: !!isHead,
+        });
+        io.emit('playerDied', {
+          id: targetId,
+          killerId: socket.id,
+          killerName: shooter.name,
+          damage: dmg,
+          headshot: !!isHead,
+          attackerPos: { x: shooter.x, y: shooter.y, z: shooter.z },
+        });
+
+        // Salva o timer aqui também (para o jogador que levou o tiro)
+        if (players[targetId]) {
+          if (players[targetId].respawnTimer) clearTimeout(players[targetId].respawnTimer);
+
+          players[targetId].respawnTimer = setTimeout(() => {
+            executeRespawn(targetId);
+          }, RESPAWN_DELAY);
         }
-      }, RESPAWN_DELAY);
+      }
     } else {
       io.emit('playerDamaged', {
         id: targetId,

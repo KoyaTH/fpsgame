@@ -80,6 +80,17 @@
   </div>
 </div>
 
+<!-- TELA DE MORTE -->
+<div id="deathScreen" class="overlay hidden">
+  <div class="panel deathPanel">
+    <h1>💀 Você foi eliminado</h1>
+    <p id="deathKillerText" class="deathKiller">Eliminado por <span id="deathKillerName">—</span></p>
+    <div id="deathCountdown" class="deathCountdown">5</div>
+    <p class="hint">Respawn automático em instantes...</p>
+    <button id="respawnBtn">Respawn</button>
+  </div>
+</div>
+
 <!-- TELA DE FIM DE PARTIDA -->
 <div id="endScreen" class="overlay hidden">
   <div class="panel">
@@ -229,6 +240,10 @@
         <div class="keybindItem">
           <span>Placar de Pontos</span>
           <button class="keybindBtn" data-action="score" type="button">Tab</button>
+        </div>
+        <div class="keybindItem">
+          <span>Respawn</span>
+          <button class="keybindBtn" data-action="reset" type="button">P</button>
         </div>
       </div>
     </div>
