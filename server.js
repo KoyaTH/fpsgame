@@ -54,19 +54,101 @@ const MAPS = {
   cidade: {
     name: 'Cidade Pequena',
     spawns: [
-      { x: 24, z: 24 }, { x: -24, z: 24 }, { x: 24, z: -24 }, { x: -24, z: -24 },
-      { x: 0, z: 24 }, { x: 0, z: -24 }, { x: 24, z: 0 }, { x: -24, z: 0 },
+      { x: 32, z: 0 }, { x: -32, z: 0 }, { x: 0, z: -32 }, { x: -28, z: -28 },
+      { x: 5, z: 15 }, { x: 5, z: -15 }, { x: 15, z: 5 }, { x: -32, z: 5 },
     ],
   },
   deserto: {
     name: 'Dunas do Deserto',
     spawns: [
-      { x: 24, z: 24 }, { x: -24, z: 24 }, { x: 24, z: -24 }, { x: -24, z: -24 },
-      { x: 0, z: 24 }, { x: 0, z: -24 }, { x: 24, z: 0 }, { x: -24, z: 0 },
+      { x: 24, z: 32 }, { x: -24, z: 32 }, { x: 24, z: -0 }, { x: -0, z: -32 },
+      { x: 0, z: 32 }, { x: 0, z: -28 }, { x: 28, z: 0 }, { x: -28, z: 0 },
+    ],
+  },
+  neve: {
+    name: 'Campo de Neve',
+    spawns: [
+      { x: -20, z: -10 }, { x: 20, z: -10 }, { x: -20, z: 10 }, { x: 20, z: 10 },
+      { x: 0, z: -18 }, { x: 0, z: 18 }, { x: -10, z: 0 }, { x: 10, z: 0 },
+      { x: -6, z: -6 }, { x: 6, z: 6 }
     ],
   },
 };
 const MAP_IDS = Object.keys(MAPS);
+
+// Aproximação de obstáculos no servidor (AABB) para evitar spawns dentro de estruturas.
+// Valores espelhados de public/maps.js — aproximados para checagem em X/Z e altura (Y).
+const MAP_OBSTACLES = {
+  arena: [
+    { x: 0, z: 0, w: 10, d: 10, y: 1.0, h: 2.0 }, // torre base
+    { x: 0, z: 7.4, w: 14, d: 4, y: 7.4, h: 0.8 },
+    { x: 0, z: 0, w: 6, d: 6, y: 4.0, h: 6.0 },
+    { x: -15, z: -15, w: 3.6, d: 3.6, y: 5.0, h: 10 },
+    { x: 15, z: -15, w: 3.6, d: 3.6, y: 5.0, h: 10 },
+    { x: -15, z: 15, w: 3.6, d: 3.6, y: 5.0, h: 10 },
+    { x: 15, z: 15, w: 3.6, d: 3.6, y: 5.0, h: 10 },
+    { x: -28, z: -28, w: 8, d: 8, y: 2.5, h: 5 },
+    { x: 28, z: -28, w: 8, d: 8, y: 2.5, h: 5 },
+    { x: -28, z: 28, w: 8, d: 8, y: 2.5, h: 5 },
+    { x: 28, z: 28, w: 8, d: 8, y: 2.5, h: 5 },
+    { x: 0, z: 22, w: 14, d: 2.4, y: 1.2, h: 2.4 },
+    { x: 0, z: -22, w: 14, d: 2.4, y: 1.2, h: 2.4 },
+    { x: 22, z: 0, w: 1.2, d: 14, y: 1.2, h: 2.4 },
+    { x: -22, z: 0, w: 1.2, d: 14, y: 1.2, h: 2.4 },
+    { x: -18, z: 24, w: 1.9, d: 1.9, y: 0.95, h: 1.9 },
+    { x: 18, z: -24, w: 1.9, d: 1.9, y: 0.95, h: 1.9 },
+  ],
+  cidade: [
+    { x: -25, z: -25, w: 12, d: 12, y: 7, h: 14 },
+    { x: 25, z: -25, w: 12, d: 12, y: 8, h: 16 },
+    { x: -25, z: 25, w: 12, d: 12, y: 6, h: 12 },
+    { x: 25, z: 25, w: 12, d: 12, y: 7.5, h: 15 },
+    { x: 0, z: 0, w: 12, d: 12, y: 0.6, h: 1.2 }, // praça central
+    { x: -6, z: 12, w: 4, d: 0.3, y: 1.6, h: 3.2 },
+    { x: 6, z: -12, w: 4, d: 0.3, y: 1.6, h: 3.2 },
+    { x: -19, z: 0, w: 8, d: 1.2, y: 1.1, h: 2.2 },
+    { x: 19, z: 0, w: 8, d: 1.2, y: 1.1, h: 2.2 },
+  ],
+  deserto: [
+    { x: 0, z: 0, w: 18, d: 18, y: 0.25, h: 0.5 }, // plataforma do oásis
+    { x: 0, z: 0, w: 6, d: 6, y: 2.25, h: 4 }, // templo
+    { x: -24, z: -24, w: 11, d: 11, y: 3.5, h: 7 },
+    { x: 24, z: -24, w: 10, d: 10, y: 4, h: 8 },
+    { x: -24, z: 24, w: 12, d: 12, y: 3, h: 6 },
+    { x: 24, z: 24, w: 10, d: 10, y: 4.5, h: 9 },
+  ],
+  neve: [
+    { x: 0, z: 0, w: 16, d: 16, y: 0.8, h: 3 }, // lago congelado central
+    { x: -12, z: -6, w: 6, d: 6, y: 1.0, h: 2 }, // formação rochosa
+    { x: 12, z: -6, w: 6, d: 6, y: 1.0, h: 2 },
+    { x: -12, z: 6, w: 6, d: 6, y: 1.0, h: 2 },
+    { x: 12, z: 6, w: 6, d: 6, y: 1.0, h: 2 },
+    { x: -20, z: -10, w: 4, d: 4, y: 1.0, h: 2 }, // igloos / abrigo
+    { x: 20, z: -10, w: 4, d: 4, y: 1.0, h: 2 },
+    { x: -20, z: 10, w: 4, d: 4, y: 1.0, h: 2 },
+    { x: 20, z: 10, w: 4, d: 4, y: 1.0, h: 2 },
+  ],
+};
+
+function _pointInsideAABB(px, py, pz, box) {
+  const halfW = box.w / 2;
+  const halfD = box.d / 2;
+  const minX = box.x - halfW;
+  const maxX = box.x + halfW;
+  const minZ = box.z - halfD;
+  const maxZ = box.z + halfD;
+  const minY = (box.y || 0) - (box.h || 0) / 2;
+  const maxY = (box.y || 0) + (box.h || 0) / 2;
+  return px >= minX && px <= maxX && pz >= minZ && pz <= maxZ && py >= minY && py <= maxY;
+}
+
+function isSpawnClear(mapId, x, z, y = 1.6) {
+  const obs = MAP_OBSTACLES[mapId] || [];
+  for (const b of obs) {
+    if (_pointInsideAABB(x, y, z, b)) return false;
+  }
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // ESTADO DA PARTIDA
@@ -92,8 +174,24 @@ function randomSpawn(mapId, currentPlayer) {
   const spawns = MAPS[mapId].spawns;
   const alivePlayers = Object.values(players).filter(pl => pl.alive && pl !== currentPlayer);
 
+  // Filtra spawns que não colidam com obstáculos no servidor
+  const clearSpawns = spawns.filter((s) => isSpawnClear(mapId, s.x, s.z, 1.6));
+
   if (alivePlayers.length === 0) {
+    if (clearSpawns.length > 0) {
+      const s = clearSpawns[Math.floor(Math.random() * clearSpawns.length)];
+      return { x: s.x, y: 1.6, z: s.z };
+    }
     const s = spawns[Math.floor(Math.random() * spawns.length)];
+    // fallback: tenta pequenos offsets para escapar de colisões
+    const tryOffsets = [0, 1.5, -1.5, 3, -3];
+    for (const dx of tryOffsets) {
+      for (const dz of tryOffsets) {
+        const nx = s.x + dx;
+        const nz = s.z + dz;
+        if (isSpawnClear(mapId, nx, nz, 1.6)) return { x: nx, y: 1.6, z: nz };
+      }
+    }
     return { x: s.x, y: 1.6, z: s.z };
   }
 
@@ -103,6 +201,7 @@ function randomSpawn(mapId, currentPlayer) {
 
   for (const s of spawns) {
     let minDist = Infinity;
+    if (!isSpawnClear(mapId, s.x, s.z, 1.6)) continue; // pula spawn dentro de obstáculo
     for (const pl of alivePlayers) {
       const dist = Math.hypot(s.x - pl.x, s.z - pl.z);
       if (dist < minDist) {
@@ -115,6 +214,23 @@ function randomSpawn(mapId, currentPlayer) {
     }
   }
 
+  if (bestSpawn && isSpawnClear(mapId, bestSpawn.x, bestSpawn.z, 1.6)) {
+    return { x: bestSpawn.x, y: 1.6, z: bestSpawn.z };
+  }
+
+  // Caso não ache um spawn limpo, tenta pequenas amostragens ao redor dos spawns existentes
+  for (const s of spawns) {
+    const tryOffsets = [0, 1.5, -1.5, 3, -3];
+    for (const dx of tryOffsets) {
+      for (const dz of tryOffsets) {
+        const nx = s.x + dx;
+        const nz = s.z + dz;
+        if (isSpawnClear(mapId, nx, nz, 1.6)) return { x: nx, y: 1.6, z: nz };
+      }
+    }
+  }
+
+  // Último recurso: retorna melhor spawn sem validação (comporta tok fallback)
   return { x: bestSpawn.x, y: 1.6, z: bestSpawn.z };
 }
 

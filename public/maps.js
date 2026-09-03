@@ -339,8 +339,55 @@ function buildDesertoMap(scene) {
   return { obstacles, bounds: 38.8 };
 }
 
+// ---------------------------------------------------------------------------
+// MAPA 4 — CAMPO DE NEVE (Neve, Lago Congelado, Igloos e Pinheiros)
+// ---------------------------------------------------------------------------
+function buildNeveMap(scene) {
+  const obstacles = [];
+  const mapHalf = 39;
+  const wallHeight = 16;
+
+  // Chão coberto de neve (branco suave)
+  addGround(scene, 84, 0xf6fbff, 0xddefff);
+  addVisiblePerimeterWalls(scene, obstacles, mapHalf, wallHeight, 0xe6f0ff, 0xcddff0);
+
+  // Lago congelado central
+  addDecoBox(scene, 18, 0.05, 18, 0, 0.03, 0, 0xd6f4ff, 0.05, 0.9);
+  addBox(scene, obstacles, 18, 0.5, 18, 0, 0.25, 0, 0xe6f0e0);
+
+  // Igloos/abrigos nas bordas
+  const igloos = [[-20, -10], [20, -10], [-20, 10], [20, 10]];
+  igloos.forEach(([x, z]) => {
+    addBox(scene, obstacles, 4, 2.2, 4, x, 1.1, z, 0xffffff, 0.9);
+    addDecoBox(scene, 4.4, 0.2, 4.4, x, 2.2, z, 0xececec, 0.6);
+  });
+
+  // Rochas e bancos de neve como cobertura tática
+  const rocks = [[-12, -6], [12, -6], [-12, 6], [12, 6], [0, -18], [0, 18]];
+  rocks.forEach(([x, z]) => addBox(scene, obstacles, 6, 2.0, 6, x, 1.0, z, 0xd0d6d9));
+
+  // Pinheiros simples: tronco + copa (usando cilindro + caixa decorativa)
+  const trees = [[-8, -20], [8, -20], [-16, -2], [16, 2], [-4, 14], [4, 14], [0, -8], [0, 8]];
+  trees.forEach(([x, z]) => {
+    addCylinder(scene, obstacles, 0.25, 0.25, 2.6, 8, x, 1.3, z, 0x5b3b2b);
+    addDecoBox(scene, 1.6, 1.6, 1.6, x, 2.5, z, 0x2f6b3a, 0.6);
+  });
+
+  // Muretas de neve e barreiras baixas
+  const barriers = [[-6, -6, 3, 1.2, 2], [6, 6, 3, 1.2, 2], [-14, 10, 4, 1.2, 2], [14, -10, 4, 1.2, 2]];
+  barriers.forEach(([x, z, w, h, d]) => addBox(scene, obstacles, w, h, d, x, h / 2, z, 0xf0f5f8));
+
+  // Pequenas pilhas de suprimentos cobertas de neve
+  [[-7, 18, 1], [7, -18, 1], [-18, -7, 1], [18, 7, 1]].forEach(([x, z, count]) =>
+    addCrateStack(scene, obstacles, x, z, count, 0xd9d9d9)
+  );
+
+  return { obstacles, bounds: 38.8 };
+}
+
 const MAP_BUILDERS = {
   arena: buildArenaMap,
   cidade: buildCidadeMap,
   deserto: buildDesertoMap,
+  neve: buildNeveMap,
 };
