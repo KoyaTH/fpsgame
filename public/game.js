@@ -31,6 +31,7 @@ let weaponKick = 0;
 let voteTimerInterval = null;
 let cameraShake = 0;
 let deathCountdownInterval = null;
+let reloadStartTime = 0;
 
 let cameraPitch = 0; // rotação vertical (X)
 let cameraYaw = 0;   // rotação horizontal (Y)
@@ -1320,7 +1321,7 @@ function drawGrappleLine(from, to) {
 // =============================================================================
 const move = { forward: false, back: false, left: false, right: false, jumpHeld: false };
 const velocity = new THREE.Vector3();
-let onGround = true;
+let onground = true;
 const PLAYER_HEIGHT = 1.6;
 
 const GROUND_SPEED = 7.2;
@@ -1404,7 +1405,6 @@ function tryReset(id) {
     headshot: false,
     attackerPos: { x: 0, y: 0, z: 0 },
   });
-  showDamageNumber(id, 101, false, true);
 }
 
 document.addEventListener('keyup', (e) => {
@@ -1442,6 +1442,7 @@ function tryReload() {
   const w = WEAPONS[myWeaponKey];
   if (!w || w.maxAmmo === Infinity) return;
   reloading = true;
+  reloadStartTime = performance.now();
   updateWeaponHUD();
   socket.emit('reload');
 }
@@ -1579,12 +1580,12 @@ function updateMovement(dt) {
       velocity.x = THREE.MathUtils.damp(velocity.x, pullDir.x * PULL_SPEED, 8, dt);
       velocity.y = THREE.MathUtils.damp(velocity.y, pullDir.y * PULL_SPEED, 8, dt);
       velocity.z = THREE.MathUtils.damp(velocity.z, pullDir.z * PULL_SPEED, 8, dt);
-      onGround = false;
+      onground = false;
       updateGrappleRope();
     }
   }
 
-  if (onGround) {
+  if (onground) {
     const speed = Math.hypot(velocity.x, velocity.z);
     if (speed > 0) {
       const drop = speed * FRICTION * dt;
@@ -1597,7 +1598,7 @@ function updateMovement(dt) {
 
     if (move.jumpHeld) {
       velocity.y = JUMP_FORCE;
-      onGround = false;
+      onground = false;
     }
   } else if (!activeGrapple.active) {
     accelerate(wish, AIR_SPEED_CAP, AIR_ACCEL, dt);
@@ -1655,12 +1656,12 @@ function updateMovement(dt) {
   if (camera.position.y <= floor) {
     camera.position.y = floor;
     velocity.y = 0;
-    onGround = true;
+    onground = true;
     if (activeGrapple.active && activeGrapple.point.y <= camera.position.y + 0.5) {
       detachGrapple(false);
     }
   } else {
-    onGround = false;
+    onground = false;
   }
 
   socket.emit('move', { x: camera.position.x, y: camera.position.y, z: camera.position.z, rotY: cameraYaw });
@@ -1735,20 +1736,34 @@ function updateViewModel(dt) {
   const bobY = Math.abs(Math.cos(time)) * 0.018 * walking;
   const aiming = aimHeld && WEAPONS[myWeaponKey] && !WEAPONS[myWeaponKey].isMelee && !WEAPONS[myWeaponKey].isUtility;
 
-  if (leftArmPivot) {
-    leftArmPivot.rotation.z = -0.34 - bobX * 5 + (aiming ? 0.12 : 0);
-    leftArmPivot.rotation.x = -0.12 + bobY * 3;
-  }
-  if (rightArmPivot) {
-    rightArmPivot.rotation.z = 0.3 + bobX * 5 - (aiming ? 0.08 : 0);
-    rightArmPivot.rotation.x = -0.08 - bobY * 3;
-  }
-
   weaponKick = THREE.MathUtils.damp(weaponKick, 0, 22, dt);
-  weaponModel.position.y = bobY;
-  weaponModel.position.x = bobX;
-  weaponModel.position.z = weaponKick;
-  weaponModel.rotation.z = -bobX * 1.4;
+
+  if (reloading) {
+    const w = WEAPONS[myWeaponKey];
+    if (!w) return;
+    const reloadProgress = Math.min((performance.now() - reloadStartTime) / w.reloadTime, 1);
+    const reloadOffset = Math.sin(reloadProgress * Math.PI) * -0.4; // Move weapon down and up
+
+    weaponModel.position.y = bobY + reloadOffset;
+    weaponModel.position.x = bobX;
+    weaponModel.position.z = weaponKick;
+    weaponModel.rotation.z = -bobX * 1.4;
+
+    if (leftArmPivot) {
+      leftArmPivot.rotation.z = -0.34 - bobX * 5 + reloadOffset * 2;
+      leftArmPivot.rotation.x = -0.12 + bobY * 3 + reloadOffset * 1.5;
+    }
+    if (rightArmPivot) {
+      rightArmPivot.rotation.z = 0.3 + bobX * 5 - reloadOffset * 2;
+      rightArmPivot.rotation.x = -0.08 - bobY * 3 + reloadOffset * 1.5;
+    }
+
+  } else {
+    weaponModel.position.y = bobY;
+    weaponModel.position.x = bobX;
+    weaponModel.position.z = weaponKick;
+    weaponModel.rotation.z = -bobX * 1.4;
+  }
 }
 
 function attemptAction() {
@@ -1858,7 +1873,7 @@ function doGrapple() {
   velocity.x += pullDir.x * 12;
   velocity.z += pullDir.z * 12;
   velocity.y = Math.max(velocity.y + 4, pullDir.y * 12);
-  onGround = false;
+  onground = false;
 }
 
 // Auto-fire para armas automáticas (SMG)
@@ -1994,29 +2009,46 @@ function animate() {
 function updateNameTags() {
   nameTagsDiv.innerHTML = '';
   const viewDirection = camera.getWorldDirection(new THREE.Vector3());
+  const raycaster = new THREE.Raycaster();
+
   for (const id in remotePlayers) {
     const rp = remotePlayers[id];
     if (!rp.group.visible) continue;
+
     const headPos = rp.group.position.clone();
     headPos.y += 2.25;
     const toPlayer = headPos.clone().sub(camera.position);
-    if (toPlayer.lengthSq() > 10000 || viewDirection.dot(toPlayer.normalize()) <= 0) continue;
+    const distToPlayer = toPlayer.length();
+    const dirToPlayer = toPlayer.clone().normalize();
+
+    if (distToPlayer > 100 || viewDirection.dot(dirToPlayer) <= 0) continue;
+
+    raycaster.set(camera.position, dirToPlayer);
+    raycaster.far = distToPlayer;
+    const obstacleHits = raycaster.intersectObjects(obstacles, true);
+    const isBlockedByStructure = obstacleHits.some((hit) => hit.distance > 0.35 && hit.distance < distToPlayer - 0.25);
+    if (isBlockedByStructure) continue;
+
     const screenPos = headPos.project(camera);
     if (screenPos.z < -1 || screenPos.z > 1 || Math.abs(screenPos.x) > 1 || Math.abs(screenPos.y) > 1) continue;
+
     const x = (screenPos.x * 0.5 + 0.5) * window.innerWidth;
     const y = (-screenPos.y * 0.5 + 0.5) * window.innerHeight;
     const tag = document.createElement('div');
     tag.className = 'nameTag';
     tag.style.left = `${x}px`;
     tag.style.top = `${y}px`;
+
     const name = document.createElement('div');
     name.textContent = rp.data.name || 'Jogador';
+
     const healthBar = document.createElement('div');
     healthBar.className = 'enemyHealth';
     const healthFill = document.createElement('div');
     healthFill.className = 'enemyHealthFill';
     healthFill.style.width = `${Math.max(0, Math.min(rp.data.health ?? 100, 100))}%`;
     healthBar.appendChild(healthFill);
+
     tag.append(name, healthBar);
     nameTagsDiv.appendChild(tag);
   }

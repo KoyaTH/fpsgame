@@ -46,22 +46,23 @@ const MAPS = {
   arena: {
     name: 'Arena Clássica',
     spawns: [
-      { x: 32, z: 32 }, { x: -32, z: 32 }, { x: 32, z: -32 }, { x: -32, z: -32 },
-      { x: 0, z: 33 }, { x: 0, z: -33 }, { x: 33, z: 0 }, { x: -33, z: 0 },
+      { x: 22, z: 22 }, { x: -22, z: 22 }, { x: 22, z: -22 }, { x: -22, z: -22 },
+      { x: 0, z: 22 }, { x: 0, z: -22 }, { x: 22, z: 0 }, { x: -22, z: 0 },
+      { x: 12, z: 12 }, { x: -12, z: 12 }, { x: 12, z: -12 }, { x: -12, z: -12 },
     ],
   },
   cidade: {
     name: 'Cidade Pequena',
     spawns: [
-      { x: 34, z: 34 }, { x: -34, z: 34 }, { x: 34, z: -34 }, { x: -34, z: -34 },
-      { x: 0, z: 34 }, { x: 0, z: -34 }, { x: 34, z: 12 }, { x: -34, z: -12 },
+      { x: 24, z: 24 }, { x: -24, z: 24 }, { x: 24, z: -24 }, { x: -24, z: -24 },
+      { x: 0, z: 24 }, { x: 0, z: -24 }, { x: 24, z: 0 }, { x: -24, z: 0 },
     ],
   },
   deserto: {
     name: 'Dunas do Deserto',
     spawns: [
-      { x: 33, z: 33 }, { x: -33, z: 33 }, { x: 33, z: -33 }, { x: -33, z: -33 },
-      { x: 0, z: 33 }, { x: 0, z: -33 }, { x: 33, z: 14 }, { x: -33, z: -14 },
+      { x: 24, z: 24 }, { x: -24, z: 24 }, { x: 24, z: -24 }, { x: -24, z: -24 },
+      { x: 0, z: 24 }, { x: 0, z: -24 }, { x: 24, z: 0 }, { x: -24, z: 0 },
     ],
   },
 };
@@ -87,10 +88,34 @@ const game = {
 
 const players = {}; // socketId -> player object
 
-function randomSpawn(mapId) {
+function randomSpawn(mapId, currentPlayer) {
   const spawns = MAPS[mapId].spawns;
-  const s = spawns[Math.floor(Math.random() * spawns.length)];
-  return { x: s.x, y: 1.6, z: s.z };
+  const alivePlayers = Object.values(players).filter(pl => pl.alive && pl !== currentPlayer);
+
+  if (alivePlayers.length === 0) {
+    const s = spawns[Math.floor(Math.random() * spawns.length)];
+    return { x: s.x, y: 1.6, z: s.z };
+  }
+
+  // Avalia cada ponto de spawn e escolhe o que está mais longe de qualquer outro jogador vivo
+  let bestSpawn = spawns[0];
+  let maxMinDist = -1;
+
+  for (const s of spawns) {
+    let minDist = Infinity;
+    for (const pl of alivePlayers) {
+      const dist = Math.hypot(s.x - pl.x, s.z - pl.z);
+      if (dist < minDist) {
+        minDist = dist;
+      }
+    }
+    if (minDist > maxMinDist) {
+      maxMinDist = minDist;
+      bestSpawn = s;
+    }
+  }
+
+  return { x: bestSpawn.x, y: 1.6, z: bestSpawn.z };
 }
 
 function executeRespawn(playerId) {
@@ -120,7 +145,7 @@ function freshAmmo(loadout) {
 }
 
 function spawnPlayer(p) {
-  const spawn = randomSpawn(game.currentMap);
+  const spawn = randomSpawn(game.currentMap, p);
   p.x = spawn.x; p.y = spawn.y; p.z = spawn.z; p.rotY = 0;
   p.health = 100;
   p.alive = true;
@@ -399,33 +424,22 @@ io.on('connection', (socket) => {
         weapon: w.name,
         headshot: !!isHead,
       });
-      if (target.health <= 0) {
-        shooter.kills += 1;
-        target.deaths += 1;
-        target.alive = false;
-        io.emit('killFeed', {
-          killerName: shooter.name,
-          victimName: target.name,
-          weapon: w.name,
-          headshot: !!isHead,
-        });
-        io.emit('playerDied', {
-          id: targetId,
-          killerId: socket.id,
-          killerName: shooter.name,
-          damage: dmg,
-          headshot: !!isHead,
-          attackerPos: { x: shooter.x, y: shooter.y, z: shooter.z },
-        });
+      io.emit('playerDied', {
+        id: targetId,
+        killerId: socket.id,
+        killerName: shooter.name,
+        damage: dmg,
+        headshot: !!isHead,
+        attackerPos: { x: shooter.x, y: shooter.y, z: shooter.z },
+      });
 
-        // Salva o timer aqui também (para o jogador que levou o tiro)
-        if (players[targetId]) {
-          if (players[targetId].respawnTimer) clearTimeout(players[targetId].respawnTimer);
+      // Salva o timer aqui também (para o jogador que levou o tiro)
+      if (players[targetId]) {
+        if (players[targetId].respawnTimer) clearTimeout(players[targetId].respawnTimer);
 
-          players[targetId].respawnTimer = setTimeout(() => {
-            executeRespawn(targetId);
-          }, RESPAWN_DELAY);
-        }
+        players[targetId].respawnTimer = setTimeout(() => {
+          executeRespawn(targetId);
+        }, RESPAWN_DELAY);
       }
     } else {
       io.emit('playerDamaged', {

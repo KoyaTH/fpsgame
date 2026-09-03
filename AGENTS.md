@@ -17,6 +17,34 @@ Keep shared gameplay values aligned between `server.js` and the corresponding
 client files. For example, a weapon added to `WEAPONS` must be valid on both
 server and client, and a map ID needs server spawn data plus a client builder.
 
+### Critical Server/Client Sync Points
+
+The following data must stay in sync between `server.js` and the client:
+
+- **Weapons** (`WEAPONS`): server holds authoritative damage/ammo/fireRate;
+  `public/constants.js` holds visual metadata (colors, barrelLength). Adding a
+  weapon requires updating both files plus `WEAPON_CHOICES` in
+  `public/constants.js` and the loadout picker in `public/index.html`.
+- **Maps** (`MAPS`): `server.js` defines spawn points; `public/maps.js` builds
+  the geometry and collision obstacles. A new map needs server spawn data plus
+  a client builder function.
+- **Regen timing**: `REGEN_DELAY_MS` / `REGEN_PER_SECOND` in `server.js` must
+  match the client-side health regen logic in `public/game.js`.
+
+## Game State Machine
+
+The match cycles through states: `waiting` → `playing` → `ended` → `voting` →
+`playing` (loop). The server owns this state in the `game` object. Client code
+should react to the corresponding socket events (`matchStarted`, `matchTime`,
+`matchEnded`, `voteStart`) rather than tracking its own authoritative state.
+
+## Socket Event Conventions
+
+Event names are short, camelCase, and consistent on both sides (e.g.
+`joinGame`, `playerMove`, `playerShoot`, `playerDamage`, `respawned`,
+`loadoutChanged`, `vote`). When adding a new event, define the payload shape
+once and reuse it on both server and client.
+
 ## Build, Test, and Development Commands
 
 Install dependencies with `npm install`. Start the local server with
@@ -36,6 +64,9 @@ short and consistent between both sides (for example, `joinGame`).
 
 Prefer small helper functions for rendering or game rules. Preserve the section
 comments in the larger JavaScript files so gameplay code remains navigable.
+
+**Language**: UI strings, comments, and user-facing text are written in
+Portuguese (pt-BR). Keep new UI text and comments in Portuguese to match.
 
 ## Testing Guidelines
 
