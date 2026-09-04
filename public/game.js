@@ -1060,6 +1060,49 @@ function connectSocket(name) {
   });
 
   socket.on('respawned', ({ x, y, z, ammo, weaponKey, health, rotY }) => {
+    // Cliente-side validation: verifica se o spawn está colidindo com obstáculos locais.
+    const playerRadius = 0.6;
+    const playerBottom = y - 0.1;
+    const playerTop = y + 1.6;
+    function localSpawnCollides(px, pz) {
+      for (const o of obstacles) {
+        if (!o.geometry || !o.geometry.parameters) continue;
+        const params = o.geometry.parameters;
+        // Suporta BoxGeometry e Cylinder aproximado como caixa
+        let halfW = (params.width || params.radiusTop * 2 || 1) / 2;
+        let halfD = (params.depth || params.radiusTop * 2 || 1) / 2;
+        const ox = o.position.x;
+        const oz = o.position.z;
+        const oy = o.position.y;
+        const minX = ox - halfW;
+        const maxX = ox + halfW;
+        const minZ = oz - halfD;
+        const maxZ = oz + halfD;
+        const minY = oy - (params.height || 1) / 2;
+        const maxY = oy + (params.height || 1) / 2;
+        if (px + playerRadius < minX) continue;
+        if (px - playerRadius > maxX) continue;
+        if (pz + playerRadius < minZ) continue;
+        if (pz - playerRadius > maxZ) continue;
+        if (playerTop < minY) continue;
+        if (playerBottom > maxY) continue;
+        return true;
+      }
+      return false;
+    }
+
+    // Retry guard para evitar loop infinito
+    window._respawnRetries = window._respawnRetries || 0;
+    if (localSpawnCollides(x, z) && window._respawnRetries < 3) {
+      console.warn('[client] spawn collides locally, requesting retry', x, z);
+      socket.emit('badSpawn', { x, z });
+      window._respawnRetries += 1;
+      socket.emit('requestInstantRespawn');
+      return; // aguarda novo spawn
+    }
+    // Reset retries ao aceitar spawn
+    window._respawnRetries = 0;
+
     myAlive = true;
     myAmmo = ammo;
     myWeaponKey = weaponKey;

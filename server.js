@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+const fs = require('fs');
 const { Server } = require('socket.io');
 
 const app = express();
@@ -27,6 +28,40 @@ function getLocalAddress() {
 const LAN_URL = `http://${getLocalAddress()}:${PORT}`;
 app.get('/server-info', (req, res) => res.json({ inviteUrl: LAN_URL }));
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
+
+// Rota de debug para testar spawns: /debug/spawn-test?map=neve&tries=50
+app.get('/debug/spawn-test', (req, res) => {
+  const mapId = req.query.map || game.currentMap;
+  const tries = parseInt(req.query.tries || '50', 10);
+  if (!MAPS[mapId]) return res.status(400).json({ error: 'mapa inválido' });
+  const results = [];
+  for (let i = 0; i < tries; i++) {
+    const s = randomSpawn(mapId, null);
+    const clear = isSpawnClear(mapId, s.x, s.z);
+    results.push({ x: s.x, z: s.z, clear });
+  }
+  return res.json({ mapId, tries: results.length, results });
+});
+
+// Rota de debug que retorna resumo: quantos spawns claros x colisões e posições únicas
+app.get('/debug/spawn-summary', (req, res) => {
+  const mapId = req.query.map || game.currentMap;
+  const tries = parseInt(req.query.tries || '200', 10);
+  if (!MAPS[mapId]) return res.status(400).json({ error: 'mapa inválido' });
+  let clearCount = 0;
+  let collideCount = 0;
+  const positions = {};
+  for (let i = 0; i < tries; i++) {
+    const s = randomSpawn(mapId, null);
+    const clear = isSpawnClear(mapId, s.x, s.z);
+    if (clear) clearCount++; else collideCount++;
+    const key = `${s.x.toFixed(2)},${s.z.toFixed(2)}`;
+    positions[key] = positions[key] || { x: s.x, z: s.z, clear, count: 0 };
+    positions[key].count += 1;
+  }
+  const unique = Object.values(positions).sort((a, b) => b.count - a.count);
+  return res.json({ mapId, tries, clearCount, collideCount, unique });
+});
 
 // ---------------------------------------------------------------------------
 // CONFIGURAÇÃO DE ARMAS (precisa bater com public/game.js)
@@ -76,59 +111,22 @@ const MAPS = {
 };
 const MAP_IDS = Object.keys(MAPS);
 
-// Aproximação de obstáculos no servidor (AABB) para evitar spawns dentro de estruturas.
-// Valores espelhados de public/maps.js — aproximados para checagem em X/Z e altura (Y).
-const MAP_OBSTACLES = {
-  arena: [
-    { x: 0, z: 0, w: 10, d: 10, y: 1.0, h: 2.0 }, // torre base
-    { x: 0, z: 7.4, w: 14, d: 4, y: 7.4, h: 0.8 },
-    { x: 0, z: 0, w: 6, d: 6, y: 4.0, h: 6.0 },
-    { x: -15, z: -15, w: 3.6, d: 3.6, y: 5.0, h: 10 },
-    { x: 15, z: -15, w: 3.6, d: 3.6, y: 5.0, h: 10 },
-    { x: -15, z: 15, w: 3.6, d: 3.6, y: 5.0, h: 10 },
-    { x: 15, z: 15, w: 3.6, d: 3.6, y: 5.0, h: 10 },
-    { x: -28, z: -28, w: 8, d: 8, y: 2.5, h: 5 },
-    { x: 28, z: -28, w: 8, d: 8, y: 2.5, h: 5 },
-    { x: -28, z: 28, w: 8, d: 8, y: 2.5, h: 5 },
-    { x: 28, z: 28, w: 8, d: 8, y: 2.5, h: 5 },
-    { x: 0, z: 22, w: 14, d: 2.4, y: 1.2, h: 2.4 },
-    { x: 0, z: -22, w: 14, d: 2.4, y: 1.2, h: 2.4 },
-    { x: 22, z: 0, w: 1.2, d: 14, y: 1.2, h: 2.4 },
-    { x: -22, z: 0, w: 1.2, d: 14, y: 1.2, h: 2.4 },
-    { x: -18, z: 24, w: 1.9, d: 1.9, y: 0.95, h: 1.9 },
-    { x: 18, z: -24, w: 1.9, d: 1.9, y: 0.95, h: 1.9 },
-  ],
-  cidade: [
-    { x: -25, z: -25, w: 12, d: 12, y: 7, h: 14 },
-    { x: 25, z: -25, w: 12, d: 12, y: 8, h: 16 },
-    { x: -25, z: 25, w: 12, d: 12, y: 6, h: 12 },
-    { x: 25, z: 25, w: 12, d: 12, y: 7.5, h: 15 },
-    { x: 0, z: 0, w: 12, d: 12, y: 0.6, h: 1.2 }, // praça central
-    { x: -6, z: 12, w: 4, d: 0.3, y: 1.6, h: 3.2 },
-    { x: 6, z: -12, w: 4, d: 0.3, y: 1.6, h: 3.2 },
-    { x: -19, z: 0, w: 8, d: 1.2, y: 1.1, h: 2.2 },
-    { x: 19, z: 0, w: 8, d: 1.2, y: 1.1, h: 2.2 },
-  ],
-  deserto: [
-    { x: 0, z: 0, w: 18, d: 18, y: 0.25, h: 0.5 }, // plataforma do oásis
-    { x: 0, z: 0, w: 6, d: 6, y: 2.25, h: 4 }, // templo
-    { x: -24, z: -24, w: 11, d: 11, y: 3.5, h: 7 },
-    { x: 24, z: -24, w: 10, d: 10, y: 4, h: 8 },
-    { x: -24, z: 24, w: 12, d: 12, y: 3, h: 6 },
-    { x: 24, z: 24, w: 10, d: 10, y: 4.5, h: 9 },
-  ],
-  neve: [
-    { x: 0, z: 0, w: 16, d: 16, y: 0.8, h: 3 }, // lago congelado central
-    { x: -12, z: -6, w: 6, d: 6, y: 1.0, h: 2 }, // formação rochosa
-    { x: 12, z: -6, w: 6, d: 6, y: 1.0, h: 2 },
-    { x: -12, z: 6, w: 6, d: 6, y: 1.0, h: 2 },
-    { x: 12, z: 6, w: 6, d: 6, y: 1.0, h: 2 },
-    { x: -20, z: -10, w: 4, d: 4, y: 1.0, h: 2 }, // igloos / abrigo
-    { x: 20, z: -10, w: 4, d: 4, y: 1.0, h: 2 },
-    { x: -20, z: 10, w: 4, d: 4, y: 1.0, h: 2 },
-    { x: 20, z: 10, w: 4, d: 4, y: 1.0, h: 2 },
-  ],
-};
+// Carrega AABBs de obstáculos a partir do arquivo público (fonte única de verdade)
+let MAP_OBSTACLES = {};
+const obstaclesPath = path.join(__dirname, 'public', 'map_obstacles.json');
+try {
+  if (fs.existsSync(obstaclesPath)) {
+    const raw = fs.readFileSync(obstaclesPath, 'utf8');
+    MAP_OBSTACLES = JSON.parse(raw);
+    console.log('Loaded map obstacles from', obstaclesPath);
+  } else {
+    console.warn('public/map_obstacles.json not found, using fallback internal.');
+    MAP_OBSTACLES = {};
+  }
+} catch (e) {
+  console.warn('Falha ao carregar public/map_obstacles.json:', e.message);
+  MAP_OBSTACLES = {};
+}
 
 function _pointInsideAABB(px, py, pz, box) {
   const halfW = box.w / 2;
@@ -142,10 +140,38 @@ function _pointInsideAABB(px, py, pz, box) {
   return px >= minX && px <= maxX && pz >= minZ && pz <= maxZ && py >= minY && py <= maxY;
 }
 
-function isSpawnClear(mapId, x, z, y = 1.6) {
+// Player collision approximation parameters
+const PLAYER_RADIUS = 0.6; // aumentado para evitar casos próximos a paredes
+const PLAYER_HEIGHT = 1.9;
+const SPAWN_SAFETY_PADDING = 0.4; // expande obstáculos para maior segurança
+
+function _aabbIntersectsPlayer(box, px, pz, radius = PLAYER_RADIUS, playerBottom = 0, playerTop = PLAYER_HEIGHT, padding = SPAWN_SAFETY_PADDING) {
+  const halfW = (box.w / 2) + padding;
+  const halfD = (box.d / 2) + padding;
+  const minX = box.x - halfW;
+  const maxX = box.x + halfW;
+  const minZ = box.z - halfD;
+  const maxZ = box.z + halfD;
+  const minY = (box.y || 0) - (box.h || 0) / 2 - padding;
+  const maxY = (box.y || 0) + (box.h || 0) / 2 + padding;
+
+  // Horizontal overlap (expand player's point by radius)
+  if (px + radius < minX) return false;
+  if (px - radius > maxX) return false;
+  if (pz + radius < minZ) return false;
+  if (pz - radius > maxZ) return false;
+
+  // Vertical overlap
+  if (playerTop < minY) return false;
+  if (playerBottom > maxY) return false;
+
+  return true; // overlap exists
+}
+
+function isSpawnClear(mapId, x, z) {
   const obs = MAP_OBSTACLES[mapId] || [];
   for (const b of obs) {
-    if (_pointInsideAABB(x, y, z, b)) return false;
+    if (_aabbIntersectsPlayer(b, x, z)) return false;
   }
   return true;
 }
@@ -174,25 +200,44 @@ function randomSpawn(mapId, currentPlayer) {
   const spawns = MAPS[mapId].spawns;
   const alivePlayers = Object.values(players).filter(pl => pl.alive && pl !== currentPlayer);
 
-  // Filtra spawns que não colidam com obstáculos no servidor
-  const clearSpawns = spawns.filter((s) => isSpawnClear(mapId, s.x, s.z, 1.6));
+  // Filtra spawns que não colidam com obstáculos no servidor e não estejam na blacklist do jogador
+  const clearSpawns = spawns.filter((s) => {
+    if (!isSpawnClear(mapId, s.x, s.z)) return false;
+    if (currentPlayer && currentPlayer.badSpawns) {
+      const key = `${s.x.toFixed(2)},${s.z.toFixed(2)}`;
+      if (currentPlayer.badSpawns.has(key)) return false;
+    }
+    return true;
+  });
 
   if (alivePlayers.length === 0) {
     if (clearSpawns.length > 0) {
       const s = clearSpawns[Math.floor(Math.random() * clearSpawns.length)];
-      return { x: s.x, y: 1.6, z: s.z };
+      console.log('[spawn] chosen clear spawn', mapId, s);
+      return { x: s.x, y: PLAYER_HEIGHT, z: s.z };
     }
     const s = spawns[Math.floor(Math.random() * spawns.length)];
-    // fallback: tenta pequenos offsets para escapar de colisões
-    const tryOffsets = [0, 1.5, -1.5, 3, -3];
+    // fallback: tenta vários offsets e jitter aleatório para escapar de colisões
+    const tryOffsets = [0, 0.8, -0.8, 1.6, -1.6, 3, -3];
     for (const dx of tryOffsets) {
       for (const dz of tryOffsets) {
         const nx = s.x + dx;
         const nz = s.z + dz;
-        if (isSpawnClear(mapId, nx, nz, 1.6)) return { x: nx, y: 1.6, z: nz };
+        if (isSpawnClear(mapId, nx, nz)) {
+          console.log('[spawn] fallback offset success', mapId, nx, nz);
+          return { x: nx, y: PLAYER_HEIGHT, z: nz };
+        } else {
+          console.log('[spawn] skipped offset collides', mapId, nx, nz);
+        }
       }
     }
-    return { x: s.x, y: 1.6, z: s.z };
+    // tentativas aleatórias adicionais
+    for (let i = 0; i < 12; i++) {
+      const nx = s.x + (Math.random() * 6 - 3);
+      const nz = s.z + (Math.random() * 6 - 3);
+      if (isSpawnClear(mapId, nx, nz)) return { x: nx, y: PLAYER_HEIGHT, z: nz };
+    }
+    return { x: s.x, y: PLAYER_HEIGHT, z: s.z };
   }
 
   // Avalia cada ponto de spawn e escolhe o que está mais longe de qualquer outro jogador vivo
@@ -201,7 +246,11 @@ function randomSpawn(mapId, currentPlayer) {
 
   for (const s of spawns) {
     let minDist = Infinity;
-    if (!isSpawnClear(mapId, s.x, s.z, 1.6)) continue; // pula spawn dentro de obstáculo
+    if (!isSpawnClear(mapId, s.x, s.z)) continue; // pula spawn dentro de obstáculo
+    if (currentPlayer && currentPlayer.badSpawns) {
+      const key = `${s.x.toFixed(2)},${s.z.toFixed(2)}`;
+      if (currentPlayer.badSpawns.has(key)) continue; // pula spawns marcados como ruins pelo jogador
+    }
     for (const pl of alivePlayers) {
       const dist = Math.hypot(s.x - pl.x, s.z - pl.z);
       if (dist < minDist) {
@@ -214,8 +263,9 @@ function randomSpawn(mapId, currentPlayer) {
     }
   }
 
-  if (bestSpawn && isSpawnClear(mapId, bestSpawn.x, bestSpawn.z, 1.6)) {
-    return { x: bestSpawn.x, y: 1.6, z: bestSpawn.z };
+  if (bestSpawn && isSpawnClear(mapId, bestSpawn.x, bestSpawn.z)) {
+    console.log('[spawn] bestSpawn chosen', mapId, bestSpawn);
+    return { x: bestSpawn.x, y: PLAYER_HEIGHT, z: bestSpawn.z };
   }
 
   // Caso não ache um spawn limpo, tenta pequenas amostragens ao redor dos spawns existentes
@@ -225,13 +275,17 @@ function randomSpawn(mapId, currentPlayer) {
       for (const dz of tryOffsets) {
         const nx = s.x + dx;
         const nz = s.z + dz;
-        if (isSpawnClear(mapId, nx, nz, 1.6)) return { x: nx, y: 1.6, z: nz };
+        if (isSpawnClear(mapId, nx, nz)) {
+          console.log('[spawn] neighborhood sample success', mapId, nx, nz);
+          return { x: nx, y: PLAYER_HEIGHT, z: nz };
+        }
       }
     }
   }
 
   // Último recurso: retorna melhor spawn sem validação (comporta tok fallback)
-  return { x: bestSpawn.x, y: 1.6, z: bestSpawn.z };
+  console.log('[spawn] fallback returning bestSpawn (may collide)', mapId, bestSpawn);
+  return { x: bestSpawn.x, y: PLAYER_HEIGHT, z: bestSpawn.z };
 }
 
 function executeRespawn(playerId) {
@@ -262,7 +316,49 @@ function freshAmmo(loadout) {
 
 function spawnPlayer(p) {
   const spawn = randomSpawn(game.currentMap, p);
-  p.x = spawn.x; p.y = spawn.y; p.z = spawn.z; p.rotY = 0;
+  // Verifica se o ponto escolhido é seguro; tenta pequenos ajustes se necessário
+  let finalX = spawn.x;
+  let finalZ = spawn.z;
+  if (!isSpawnClear(game.currentMap, finalX, finalZ)) {
+    console.warn('[spawn] spawn point collides, attempting jitter', game.currentMap, finalX, finalZ);
+    const tryOffsets = [0, 0.8, -0.8, 1.6, -1.6, 3, -3];
+    let found = false;
+    for (const dx of tryOffsets) {
+      for (const dz of tryOffsets) {
+        const nx = spawn.x + dx;
+        const nz = spawn.z + dz;
+        if (isSpawnClear(game.currentMap, nx, nz)) {
+          finalX = nx; finalZ = nz; found = true;
+          console.log('[spawn] jitter resolved to', finalX, finalZ);
+          break;
+        }
+      }
+      if (found) break;
+    }
+    if (!found) {
+      for (let i = 0; i < 16; i++) {
+        const nx = spawn.x + (Math.random() * 6 - 3);
+        const nz = spawn.z + (Math.random() * 6 - 3);
+        if (isSpawnClear(game.currentMap, nx, nz)) { finalX = nx; finalZ = nz; found = true; console.log('[spawn] random jitter resolved to', finalX, finalZ); break; }
+      }
+    }
+    if (!found) console.warn('[spawn] could not find clear position near spawn; using original (may collide)');
+  }
+  p.x = finalX; p.z = finalZ; p.rotY = 0;
+  // Se a posição final ainda colidir com um obstáculo, eleva o jogador ao topo do obstáculo mais alto +5 unidades
+  if (!isSpawnClear(game.currentMap, p.x, p.z)) {
+    const ob = getIntersectingObstacle(game.currentMap, p.x, p.z);
+    if (ob) {
+      const top = (ob.y || 0) + (ob.h || 0) / 2;
+      p.y = top + 5; // coloca o jogador sobre o obstáculo e sobe +5
+      console.log('[spawn] elevating player to top of obstacle', game.currentMap, p.x, p.z, 'newY=', p.y);
+    } else {
+      // sem obstáculo identificado — usa altura padrão
+      p.y = spawn.y;
+    }
+  } else {
+    p.y = spawn.y;
+  }
   p.health = 100;
   p.alive = true;
   p.weaponKey = p.loadout[0];
@@ -270,6 +366,19 @@ function spawnPlayer(p) {
   p.lastShot = 0;
   p.lastDamageTime = Date.now();
   p.reloadingUntil = 0;
+}
+
+// Retorna o obstáculo (AABB) que intersecta a posição x/z, retorna o mais alto se houver vários
+function getIntersectingObstacle(mapId, x, z) {
+  const obs = MAP_OBSTACLES[mapId] || [];
+  let best = null;
+  for (const b of obs) {
+    if (_aabbIntersectsPlayer(b, x, z, PLAYER_RADIUS, 0, PLAYER_HEIGHT, 0)) {
+      const top = (b.y || 0) + (b.h || 0) / 2;
+      if (!best || top > ((best.y || 0) + (best.h || 0) / 2)) best = b;
+    }
+  }
+  return best;
 }
 
 function scoreboard() {
@@ -380,6 +489,17 @@ io.on('connection', (socket) => {
   socket.on('requestInstantRespawn', () => {
     // console.log(`Jogador ${socket.id} pediu respawn rápido.`);
     executeRespawn(socket.id);
+  });
+
+  socket.on('badSpawn', ({ x, z }) => {
+    if (!players[socket.id]) return;
+    if (!players[socket.id].badSpawns) players[socket.id].badSpawns = new Set();
+    const key = `${x.toFixed(2)},${z.toFixed(2)}`;
+    players[socket.id].badSpawns.add(key);
+    // Limpa blacklist após curto tempo para não bloquear permanentemente
+    setTimeout(() => {
+      if (players[socket.id] && players[socket.id].badSpawns) players[socket.id].badSpawns.delete(key);
+    }, 8000);
   });
 
   socket.on('playerDied', (data) => {
