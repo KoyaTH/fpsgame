@@ -121,6 +121,22 @@ function playReloadSound(duration) {
   } catch (e) { }
 }
 
+// Faca acertando alguém: pancada grave e abafada
+function playKnifeHitSound() {
+  try {
+    playNoise({ duration: 0.12, volume: 0.3, freq: 700, q: 0.9 });
+    playTone({ type: 'sine', from: 180, to: 70, duration: 0.12, volume: 0.25 });
+  } catch (e) { }
+}
+
+// Faca batendo na parede: tilintar metálico
+function playKnifeWallSound() {
+  try {
+    playNoise({ duration: 0.06, volume: 0.18, filter: 'bandpass', freq: 3800, q: 8 });
+    playTone({ type: 'triangle', from: 2600, to: 2200, duration: 0.14, volume: 0.05 });
+  } catch (e) { }
+}
+
 function playEmptySound() {
   try { playNoise({ duration: 0.04, volume: 0.12, filter: 'bandpass', freq: 3500, q: 6 }); } catch (e) { }
 }

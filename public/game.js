@@ -515,7 +515,6 @@ const vm = {
   ads: 0,            // 0 = quadril, 1 = mirando
   adsPos: null,      // posição do holder que alinha a mira da arma atual
   drawT: 1,          // 0..1 animação de sacar a arma
-  swingT: 1,         // 0..1 golpe de faca
   landDip: 0,
   tilt: 0,
 };
@@ -566,7 +565,11 @@ function updateWeaponModel() {
     : VM_ADS;
   vm.holder.add(vm.weapon.group);
   vm.holder.add(makeViewArm(new THREE.Vector3(0, -0.06, 0.02), 1));
-  vm.holder.add(makeViewArm(vm.weapon.support, -1));
+  if (key !== 'knife') vm.holder.add(makeViewArm(vm.weapon.support, -1));
+  knife.t = 1;
+  knife.hitStop = 0;
+  knife.fidget = 1;
+  knife.idle = 0;
   // Sem sombra e sempre por cima do mundo (não atravessa paredes)
   vm.holder.traverse((o) => {
     if (o.isMesh) {
@@ -634,7 +637,6 @@ function updateViewModel(dt) {
   vm.kickRot = THREE.MathUtils.damp(vm.kickRot, 0, 14, dt);
   vm.landDip = THREE.MathUtils.damp(vm.landDip, 0, 9, dt);
   vm.drawT = Math.min(vm.drawT + dt / 0.32, 1);
-  vm.swingT = Math.min(vm.swingT + dt / 0.28, 1);
 
   // Animação de recarga: gira a arma para o lado e abaixa
   let reloadRotZ = 0; let reloadRotX = 0; let reloadY = 0;
@@ -652,30 +654,217 @@ function updateViewModel(dt) {
   const drawY = (1 - draw) * -0.35;
   const drawRot = (1 - draw) * 0.9;
 
-  // Golpe de faca: arco da direita para a esquerda
-  let swingRotY = 0; let swingX = 0;
-  if (vm.swingT < 1) {
-    const s = Math.sin(vm.swingT * Math.PI);
-    swingRotY = s * 1.1;
-    swingX = -s * 0.18;
+  // Faca tem animação própria (pose, combo, rastro)
+  if (myWeaponKey === 'knife') {
+    applyKnifePose(dt, { bobX, bobY, idle, draw, speed });
+    return;
   }
+  hideKnifeTrail();
 
   const base = VM_HIP.clone().lerp(vm.adsPos || VM_ADS, vm.ads);
   // Mirando, qualquer giro desalinha a mira: amortece balanço e inclinação
   const steady = 1 - vm.ads * 0.9;
   vm.holder.position.set(
-    base.x + bobX + vm.sway.x + swingX,
+    base.x + bobX + vm.sway.x,
     base.y + bobY + vm.sway.y + idle + drawY + reloadY - vm.landDip + (crouchAmount * 0.02),
     base.z + vm.kick,
   );
   vm.holder.rotation.set(
     vm.kickRot * (1 - vm.ads * 0.6) + reloadRotX + drawRot + vm.sway.y * 1.5 * steady,
-    vm.sway.x * 2 * steady + swingRotY,
+    vm.sway.x * 2 * steady,
     (-bobX * 2 + vm.tilt * 0.6) * steady + reloadRotZ,
   );
 
   // Gancho preso: aponta levemente para o ponto
   if (grapple.active) vm.holder.rotation.x += 0.15;
+}
+
+// =============================================================================
+// FACA: POSE, COMBO DE GOLPES, RASTRO DA LÂMINA E ACERTO
+// =============================================================================
+// Atacando sem parar faz um ciclo de 3 golpes: corte da direita para a
+// esquerda, revés (volta) e estocada. Cada golpe tem preparação, corte rápido
+// e recuperação. O dano conta no meio do corte (não no clique), para bater
+// com o que aparece na tela, e um acerto "trava" a faca por um instante.
+const KNIFE_REST = { px: 0.19, py: -0.2, pz: -0.36, rx: 0.3, ry: 0.2, rz: -0.45 };
+const KNIFE_SWING_TIME = 0.4;    // duração de um golpe (s)
+const KNIFE_HIT_DELAY = 85;      // ms entre o clique e o momento do corte
+const KNIFE_COMBO_WINDOW = 900;  // ms para o próximo clique emendar no combo
+const KNIFE_FIDGET_AFTER = 6;    // s parado com a faca até girá-la na mão
+
+// Poses-chave relativas ao descanso: [tempo, px, py, pz, rx, ry, rz]
+// (ry > 0 vira a ponta para a esquerda; rz inclina o fio)
+const KNIFE_SWINGS = [
+  // Corte da direita para a esquerda
+  [[0, 0, 0, 0, 0, 0, 0], [0.22, 0.12, 0.17, 0.06, 0.45, -0.6, -0.6], [0.48, -0.34, -0.03, -0.15, -0.3, 1.1, 0.75], [1, 0, 0, 0, 0, 0, 0]],
+  // Revés: da esquerda para a direita
+  [[0, 0, 0, 0, 0, 0, 0], [0.22, -0.22, 0.15, 0.04, 0.38, 0.8, 0.85], [0.48, 0.18, -0.06, -0.13, -0.25, -0.8, -0.55], [1, 0, 0, 0, 0, 0, 0]],
+  // Estocada para frente
+  [[0, 0, 0, 0, 0, 0, 0], [0.24, 0.03, -0.02, 0.13, -0.1, 0.05, 0.25], [0.44, -0.08, 0.05, -0.32, -0.38, 0.25, 0.1], [1, 0, 0, 0, 0, 0, 0]],
+];
+// Fase de corte de cada golpe (o rastro só aparece aqui)
+const KNIFE_SLASH_PHASE = [0.2, 0.55];
+
+const knife = {
+  t: 1,            // 0..1 progresso do golpe atual
+  swing: 0,        // índice em KNIFE_SWINGS
+  lastAttack: 0,
+  hitStop: 0,      // s em que a animação fica parada após acertar
+  bounce: 0,       // tranco quando bate na parede
+  idle: 0,
+  fidget: 1,       // 0..1 giro da faca na mão (parado por um tempo)
+};
+
+const easeInOut = (u) => (u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2);
+const easeOutCubic = (u) => 1 - Math.pow(1 - u, 3);
+
+// Interpola as poses-chave do golpe atual; corte rápido, preparação/volta suaves
+function evalKnifeSwing(t, out) {
+  const keys = KNIFE_SWINGS[knife.swing];
+  let i = 0;
+  while (i < keys.length - 2 && t > keys[i + 1][0]) i++;
+  const a = keys[i];
+  const b = keys[i + 1];
+  const u = Math.min(Math.max((t - a[0]) / (b[0] - a[0]), 0), 1);
+  const e = i === 1 ? easeOutCubic(u) : easeInOut(u);
+  for (let k = 1; k <= 6; k++) out[k - 1] = a[k] + (b[k] - a[k]) * e;
+  return out;
+}
+
+function startKnifeSwing() {
+  const now = performance.now();
+  knife.swing = now - knife.lastAttack < KNIFE_COMBO_WINDOW ? (knife.swing + 1) % KNIFE_SWINGS.length : 0;
+  knife.lastAttack = now;
+  knife.t = 0;
+  knife.idle = 0;
+  knife.fidget = 1;
+  // O som e o dano saem no momento do corte
+  setTimeout(() => {
+    if (!myAlive || myWeaponKey !== 'knife') return;
+    playShotSound('knife', 1, 0);
+    doShoot(WEAPONS.knife);
+  }, KNIFE_HIT_DELAY);
+}
+
+// Retorno do golpe (chamado por doShoot)
+function onKnifeResult(hitPlayer, hitWall) {
+  if (hitPlayer) {
+    knife.hitStop = 0.08;
+    viewPunch.pitch -= 0.03;
+    cameraShake = Math.max(cameraShake, 0.05);
+    playKnifeHitSound();
+  } else if (hitWall) {
+    knife.hitStop = 0.05;
+    knife.bounce = 1;
+    cameraShake = Math.max(cameraShake, 0.025);
+    playKnifeWallSound();
+  }
+}
+
+const _knifeSwing = [0, 0, 0, 0, 0, 0];
+
+function applyKnifePose(dt, { bobX, bobY, idle, draw, speed }) {
+  // Hit-stop: segura o golpe por alguns milissegundos após o impacto
+  if (knife.hitStop > 0) knife.hitStop -= dt;
+  else knife.t = Math.min(knife.t + dt / KNIFE_SWING_TIME, 1);
+  knife.bounce = THREE.MathUtils.damp(knife.bounce, 0, 12, dt);
+
+  // Parado por um tempo: gira a faca na mão
+  const still = knife.t >= 1 && speed < 0.5 && vm.drawT >= 1;
+  knife.idle = still ? knife.idle + dt : 0;
+  if (knife.idle > KNIFE_FIDGET_AFTER && knife.fidget >= 1) {
+    knife.fidget = 0;
+    knife.idle = 0;
+  }
+  if (knife.fidget < 1) knife.fidget = Math.min(knife.fidget + dt / 1.1, 1);
+  const f = knife.fidget < 1 ? easeInOut(knife.fidget) : 0;
+  const fidgetLift = Math.sin(f * Math.PI) * 0.06;
+  const fidgetSpin = f * Math.PI * 2;
+
+  const s = knife.t < 1 ? evalKnifeSwing(knife.t, _knifeSwing) : _knifeSwing.fill(0);
+
+  // Correndo: faca mais baixa e inclinada, balançando mais
+  const run = onground ? Math.min(Math.max((speed - 5) / 5, 0), 1) : 0;
+  // Sacar: sobe girando uma volta inteira
+  const drawSpin = (1 - draw) * Math.PI * 2;
+
+  vm.holder.position.set(
+    KNIFE_REST.px + s[0] + bobX * 1.6 + vm.sway.x,
+    KNIFE_REST.py + s[1] + bobY * 1.6 + vm.sway.y + idle + (1 - draw) * -0.3 - vm.landDip - run * 0.03 + fidgetLift + crouchAmount * 0.02,
+    KNIFE_REST.pz + s[2] + knife.bounce * 0.05,
+  );
+  vm.holder.rotation.set(
+    KNIFE_REST.rx + s[3] + vm.sway.y * 1.5 + run * 0.18 - knife.bounce * 0.2,
+    KNIFE_REST.ry + s[4] + vm.sway.x * 2,
+    KNIFE_REST.rz + s[5] - bobX * 3 + vm.tilt * 0.6,
+  );
+  // A lâmina gira entre os dedos (sacar e floreio), a mão fica parada
+  vm.weapon.group.rotation.x = -(drawSpin + fidgetSpin);
+  updateKnifeTrail(knife.t > KNIFE_SLASH_PHASE[0] && knife.t < KNIFE_SLASH_PHASE[1] && knife.hitStop <= 0);
+}
+
+// Rastro da lâmina: faixa de luz entre a ponta e a base nos últimos frames
+const KNIFE_TRAIL_POINTS = 8;
+const KNIFE_TIP = new THREE.Vector3(0, 0, -0.46);
+const KNIFE_BASE = new THREE.Vector3(0, 0, -0.3); // só a metade de fora da lâmina
+const knifeTrail = { mesh: null, history: [], strength: 0, wasActive: false };
+const _trailTip = new THREE.Vector3();
+const _trailBase = new THREE.Vector3();
+
+function createKnifeTrail() {
+  const n = KNIFE_TRAIL_POINTS;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 2 * 3), 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 2 * 3), 3));
+  const index = [];
+  for (let i = 0; i < n - 1; i++) {
+    const a = i * 2; const b = a + 1; const c = a + 2; const d = a + 3;
+    index.push(a, b, c, b, d, c);
+  }
+  geo.setIndex(index);
+  knifeTrail.mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  }));
+  knifeTrail.mesh.frustumCulled = false;
+  knifeTrail.mesh.renderOrder = 11;
+  vm.root.add(knifeTrail.mesh);
+}
+
+function updateKnifeTrail(active) {
+  if (!knifeTrail.mesh) createKnifeTrail();
+  // Ponta e base da lâmina no espaço da câmera (sem depender da matriz do mundo)
+  vm.holder.updateMatrix();
+  vm.weapon.group.updateMatrix();
+  _trailTip.copy(KNIFE_TIP).applyMatrix4(vm.weapon.group.matrix).applyMatrix4(vm.holder.matrix);
+  _trailBase.copy(KNIFE_BASE).applyMatrix4(vm.weapon.group.matrix).applyMatrix4(vm.holder.matrix);
+
+  const h = knifeTrail.history;
+  // Começo do corte: não liga com posições de antes (evita um borrão gigante)
+  if (active && !knifeTrail.wasActive) h.length = 0;
+  knifeTrail.wasActive = active;
+  h.unshift([_trailTip.x, _trailTip.y, _trailTip.z, _trailBase.x, _trailBase.y, _trailBase.z]);
+  if (h.length > KNIFE_TRAIL_POINTS) h.length = KNIFE_TRAIL_POINTS;
+  knifeTrail.strength = active ? 1 : Math.max(knifeTrail.strength - 0.25, 0);
+  knifeTrail.mesh.visible = knifeTrail.strength > 0 && h.length > 1;
+  if (!knifeTrail.mesh.visible) return;
+
+  const pos = knifeTrail.mesh.geometry.attributes.position.array;
+  const col = knifeTrail.mesh.geometry.attributes.color.array;
+  for (let i = 0; i < KNIFE_TRAIL_POINTS; i++) {
+    const p = h[Math.min(i, h.length - 1)];
+    pos.set(p, i * 6);
+    // some em direção à cauda; a ponta brilha mais que a base
+    const fade = Math.pow(1 - i / (KNIFE_TRAIL_POINTS - 1), 1.5) * knifeTrail.strength * 0.4;
+    col.set([0.8 * fade, 0.9 * fade, fade, 0.1 * fade, 0.12 * fade, 0.15 * fade], i * 6);
+  }
+  knifeTrail.mesh.geometry.attributes.position.needsUpdate = true;
+  knifeTrail.mesh.geometry.attributes.color.needsUpdate = true;
+}
+
+function hideKnifeTrail() {
+  knifeTrail.history.length = 0;
+  knifeTrail.strength = 0;
+  if (knifeTrail.mesh) knifeTrail.mesh.visible = false;
 }
 
 // Inclinação lateral da câmera (strafe e slide) + recuo de câmera
@@ -824,6 +1013,21 @@ function animateRemote(rp, dt, speed, vy) {
   const aimX = Math.PI / 2 + a.pitch * 0.85 - (knife ? 0.9 : 0);
   parts.armR.rotation.set(aimX, 0, 0);
   parts.armL.rotation.set(aimX - (knife ? 0.3 : 0.05), 0, knife ? 0.2 : -0.55);
+  parts.upper.rotation.y = 0;
+
+  // Golpe de faca: ergue o braço de um lado e corta em arco para o outro,
+  // girando o tronco junto (alterna o lado a cada golpe)
+  if (knife && a.swingT < 1) {
+    a.swingT = Math.min(a.swingT + dt / 0.38, 1);
+    const p = a.swingT;
+    let side;
+    if (p < 0.25) side = easeInOut(p / 0.25);                         // preparação
+    else if (p < 0.55) side = 1 - 2 * easeOutCubic((p - 0.25) / 0.3); // corte
+    else side = -1 + easeInOut((p - 0.55) / 0.45);                    // volta
+    const lift = Math.sin(Math.min(p / 0.55, 1) * Math.PI) * 0.9;
+    parts.armR.rotation.set(aimX + 0.9 * (p < 0.55 ? 1 : 1 - easeInOut((p - 0.55) / 0.45)) - lift * 0.3, 0, side * 1.1 * a.swingDir);
+    parts.upper.rotation.y = -side * 0.35 * a.swingDir;
+  }
   // Recuo ao atirar
   a.recoil = THREE.MathUtils.damp(a.recoil, 0, 14, dt);
   parts.armR.rotation.x += a.recoil;
@@ -860,7 +1064,7 @@ function addRemotePlayer(p) {
     id: p.id,
     buffer: [], // snapshots { t, x, y, z, rotY, pitch, crouch } para interpolação
     data: { id: p.id, name: p.name || 'Jogador', health: p.health ?? 100, alive: !!p.alive, weaponKey: p.weaponKey || 'smg' },
-    anim: { stride: 0, crouch: 0, pitch: 0, recoil: 0, lastY: feetY },
+    anim: { stride: 0, crouch: 0, pitch: 0, recoil: 0, lastY: feetY, swingT: 1, swingDir: 1 },
     flashTimeout: null,
     tag, tagName, healthFill,
     losVisible: true,
@@ -1062,8 +1266,13 @@ function connectSocket() {
     if (!rp || !rp.group.visible) return;
     const w = WEAPONS[weaponKey] || WEAPONS.smg;
     const from = getRemoteMuzzlePos(rp, new THREE.Vector3());
-    triggerMuzzleFlash(rp.parts.flash, 0.06, 0.6);
-    rp.anim.recoil = w.isMelee ? -0.8 : 0.25;
+    if (!w.isMelee) triggerMuzzleFlash(rp.parts.flash, 0.06, 0.6);
+    if (w.isMelee) {
+      rp.anim.swingT = 0;
+      rp.anim.swingDir = -rp.anim.swingDir;
+    } else {
+      rp.anim.recoil = 0.25;
+    }
     const pellets = ends && ends.length ? ends : [];
     for (const e of pellets) {
       const to = new THREE.Vector3(e.x, e.y, e.z);
@@ -1773,6 +1982,11 @@ function attemptAction() {
     fireGrapple();
     return;
   }
+  if (w.isMelee) {
+    lastLocalShot = now;
+    startKnifeSwing();
+    return;
+  }
   if (reloading) return;
   if (w.maxAmmo !== Infinity && myAmmo[myWeaponKey] <= 0) {
     lastLocalShot = now;
@@ -1807,6 +2021,7 @@ function doShoot(w) {
   const pellets = w.pellets || 1;
   const hits = [];
   const ends = [];
+  let meleeHitWall = false;
   getMuzzleWorldPos(_muzzle);
 
   for (let i = 0; i < pellets; i++) {
@@ -1827,8 +2042,11 @@ function doShoot(w) {
     if (playerHit && (!wallHit || playerHit.distance < wallHit.distance)) {
       end = playerHit.point;
       hits.push({ id: meshToId.get(playerHit.object), head: !!playerHit.object.userData.isHead });
+      // Faca: espirra sangue na hora, sem esperar o servidor
+      if (w.isMelee) spawnBloodHit(end, !!playerHit.object.userData.isHead);
     } else if (wallHit) {
       end = wallHit.point;
+      meleeHitWall = w.isMelee;
       if (wallHit.face) {
         _normal.copy(wallHit.face.normal).transformDirection(wallHit.object.matrixWorld);
         spawnImpact(end, _normal, wallHit.object.material.color.getHex());
@@ -1849,7 +2067,7 @@ function doShoot(w) {
 
   // Feedback: clarão, luz, recuo, som
   if (w.isMelee) {
-    vm.swingT = 0;
+    onKnifeResult(hits.length > 0, meleeHitWall);
   } else {
     triggerMuzzleFlash(vm.flash, 0.05, pellets > 1 ? 0.6 : 0.38);
     muzzleLight.position.copy(_muzzle);
@@ -1863,7 +2081,7 @@ function doShoot(w) {
     lastRecoilAt = performance.now();
     viewPunch.pitch += recoil * 0.6;
   }
-  playShotSound(key, 1, 0);
+  if (!w.isMelee) playShotSound(key, 1, 0); // o som da faca sai em startKnifeSwing
 
   // Recarrega sozinho quando o pente acaba
   if (w.maxAmmo !== Infinity && myAmmo[key] === 0) setTimeout(tryReload, 250);
