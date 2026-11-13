@@ -4,7 +4,6 @@
   "description": "FPS FFA multiplayer em primeira pessoa, feito do zero: Node + Socket.IO + Three.js",
   "main": "server.js",
   "scripts": {
-    "generate:obstacles": "node tools/generate_obstacles.js",
     "start": "node server.js"
   },
   "dependencies": {

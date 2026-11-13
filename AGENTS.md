@@ -27,7 +27,14 @@ The following data must stay in sync between `server.js` and the client:
   `public/constants.js` and the loadout picker in `public/index.html`.
 - **Maps** (`MAPS`): `server.js` defines spawn points; `public/maps.js` builds
   the geometry and collision obstacles. A new map needs server spawn data plus
-  a client builder function.
+  a client builder function. The server loads `public/maps.js` directly at
+  startup (`lib/mapObstacles.js`) to get the same AABBs and moves any spawn
+  that falls inside an obstacle to the nearest clear point — no generated
+  file to keep in sync. `maps.js` may only use the THREE subset shimmed there.
+- **Eye height**: `EYE_HEIGHT` in `server.js` must match `PLAYER_HEIGHT` in
+  `public/game.js`.
+- **Respawn sequence**: every spawn bumps `spawnSeq`; the client sends it with
+  `move` and the server drops packets from an older life.
 - **Regen timing**: `REGEN_DELAY_MS` / `REGEN_PER_SECOND` in `server.js` must
   match the client-side health regen logic in `public/game.js`.
 

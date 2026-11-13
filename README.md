@@ -105,6 +105,7 @@ fpsgame/
 │   ├── maps.js             # Construção procedural da geometria dos mapas e colisões
 │   ├── index.html          # Interface, HUD e carregamento de scripts
 │   └── style.css           # Estilos visuais da interface, overlays e HUD
+├── lib/mapObstacles.js     # Extrai as colisões de public/maps.js para o servidor
 ├── server.js               # Servidor autoritativo Node.js / Socket.IO
 ├── package.json            # Dependências e scripts do Node.js
 ├── render.yaml             # Configuração para deploy no Render

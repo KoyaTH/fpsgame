@@ -8,7 +8,7 @@ let socket;
 let myId = null;
 let joined = false;
 
-const remotePlayers = {}; // id -> { group, headGroup, weaponSlot, materials, targetPos, targetRotY, data, animTime, flashTimeout }
+const remotePlayers = {}; // id -> { group, hitMeshes, materials, buffer, data, animTime, flashTimeout, tag }
 const bulletTracers = []; // { mesh, spark, life, maxLife }
 const nameTagsDiv = document.createElement('div');
 nameTagsDiv.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:5;';
@@ -32,6 +32,8 @@ let voteTimerInterval = null;
 let cameraShake = 0;
 let deathCountdownInterval = null;
 let reloadStartTime = 0;
+let mySpawnSeq = 0;        // invalida pacotes de movimento de antes do respawn
+let myName = 'Jogador';
 
 let cameraPitch = 0; // rotação vertical (X)
 let cameraYaw = 0;   // rotação horizontal (Y)
@@ -248,7 +250,11 @@ const controls = {
   isLocked: false,
   lock() {
     const el = renderer ? renderer.domElement : document.body;
-    if (el.requestPointerLock) el.requestPointerLock();
+    if (!el.requestPointerLock) return;
+    // Navegadores recusam o lock sem gesto do usuário (ex.: no respawn automático);
+    // nesse caso basta clicar na tela, então ignoramos a rejeição.
+    const result = el.requestPointerLock();
+    if (result && result.catch) result.catch(() => {});
   },
   unlock() {
     if (document.exitPointerLock) document.exitPointerLock();
@@ -342,28 +348,34 @@ function initInGameLoadoutUI() {
     pickerEl.appendChild(div);
   });
 
-  const modal = document.getElementById('changeLoadoutModal');
-  const openModal = () => {
-    if (!joined) return;
-    if (controls) controls.unlock();
-    inGameSelectedWeapons = [...myLoadout];
-    syncInGameLoadoutOptions();
-    modal.classList.remove('hidden');
-  };
-  const closeModal = () => {
-    modal.classList.add('hidden');
-  };
-
-  document.getElementById('openLoadoutHudBtn')?.addEventListener('click', openModal);
-  document.getElementById('closeLoadoutXBtn')?.addEventListener('click', closeModal);
-  document.getElementById('cancelLoadoutBtn')?.addEventListener('click', closeModal);
+  document.getElementById('openLoadoutHudBtn')?.addEventListener('click', openInGameLoadoutModal);
+  document.getElementById('closeLoadoutXBtn')?.addEventListener('click', closeInGameLoadoutModal);
+  document.getElementById('cancelLoadoutBtn')?.addEventListener('click', closeInGameLoadoutModal);
 
   document.getElementById('confirmLoadoutBtn')?.addEventListener('click', () => {
     if (inGameSelectedWeapons.length !== 2) return;
     socket.emit('changeLoadout', { loadout: inGameSelectedWeapons });
-    closeModal();
-    if (gameStatus === 'playing' && myAlive) controls.lock();
+    closeInGameLoadoutModal();
   });
+}
+
+function openInGameLoadoutModal() {
+  if (!joined) return;
+  controls.unlock();
+  inGameSelectedWeapons = [...myLoadout];
+  syncInGameLoadoutOptions();
+  document.getElementById('changeLoadoutModal').classList.remove('hidden');
+}
+
+function closeInGameLoadoutModal() {
+  document.getElementById('changeLoadoutModal').classList.add('hidden');
+  if (gameStatus === 'playing' && myAlive) controls.lock();
+}
+
+// Algum overlay que precisa do cursor livre está aberto?
+function isAnyModalOpen() {
+  return ['settingsModal', 'changeLoadoutModal', 'loadoutScreen', 'endScreen', 'voteScreen', 'deathScreen']
+    .some((id) => !document.getElementById(id).classList.contains('hidden'));
 }
 
 function syncInGameLoadoutOptions() {
@@ -447,28 +459,22 @@ function initThree() {
   const dirLight = new THREE.DirectionalLight(0xfffaed, 0.95);
   dirLight.position.set(30, 45, 20);
   dirLight.castShadow = true;
-  dirLight.shadow.mapSize.width = 1024;
-  dirLight.shadow.mapSize.height = 1024;
+  dirLight.shadow.mapSize.width = 2048;
+  dirLight.shadow.mapSize.height = 2048;
+  // A câmera de sombra padrão cobre só 10x10 unidades; ajusta para o mapa inteiro
+  const shadowCam = dirLight.shadow.camera;
+  shadowCam.left = -50; shadowCam.right = 50;
+  shadowCam.top = 50; shadowCam.bottom = -50;
+  shadowCam.near = 1; shadowCam.far = 140;
+  shadowCam.updateProjectionMatrix();
   scene.add(dirLight);
 
   createViewModel();
 
-  document.body.addEventListener('click', (e) => {
+  document.body.addEventListener('click', () => {
     // Se algum modal ou menu estiver aberto, não trava o cursor
-    const settingsModal = document.getElementById('settingsModal');
-    if (settingsModal && !settingsModal.classList.contains('hidden')) return;
-    const changeLoadoutModal = document.getElementById('changeLoadoutModal');
-    if (changeLoadoutModal && !changeLoadoutModal.classList.contains('hidden')) return;
-    const loadoutScreen = document.getElementById('loadoutScreen');
-    if (loadoutScreen && !loadoutScreen.classList.contains('hidden')) return;
-    const endScreen = document.getElementById('endScreen');
-    if (endScreen && !endScreen.classList.contains('hidden')) return;
-    const voteScreen = document.getElementById('voteScreen');
-    if (voteScreen && !voteScreen.classList.contains('hidden')) return;
-
-    if (gameStatus === 'playing' && myAlive && !controls.isLocked) {
-      controls.lock();
-    }
+    if (isAnyModalOpen()) return;
+    if (gameStatus === 'playing' && myAlive && !controls.isLocked) controls.lock();
   });
 
   loadMap(currentMapId);
@@ -482,36 +488,46 @@ function initThree() {
   animate();
 }
 
+// Libera geometrias/materiais da GPU (evita vazamento de memória ao trocar de mapa)
+function disposeObject(obj) {
+  obj.traverse((child) => {
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) {
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      mats.forEach((m) => m.dispose());
+    }
+  });
+}
+
 function loadMap(mapId) {
-  // Limpa objetos antigos (exceto luzes e câmera) e reconstrói
+  if (!MAP_BUILDERS[mapId]) return;
+  detachGrapple(false);
+  clearBulletTracers();
+
+  // Remove a geometria do mapa antigo (mantém luzes, câmera e jogadores remotos)
+  const remoteGroups = new Set(Object.values(remotePlayers).map((rp) => rp.group));
   for (let i = scene.children.length - 1; i >= 0; i--) {
     const obj = scene.children[i];
-    if (obj.isLight || obj === camera) continue;
+    if (obj.isLight || obj === camera || remoteGroups.has(obj)) continue;
     scene.remove(obj);
+    disposeObject(obj);
   }
-  for (const id in remotePlayers) scene.remove(remotePlayers[id].group);
-
-  detachGrapple(false);
 
   const built = MAP_BUILDERS[mapId](scene);
   obstacles = built.obstacles;
   mapBounds = built.bounds || 38.5;
   currentMapId = mapId;
-  document.getElementById('mapName').textContent = (MAP_NAMES[mapId] || mapId);
+  document.getElementById('mapName').textContent = MAP_NAMES[mapId] || mapId;
 
-  // Pré-calcula Bounding Box 3D exata para cada obstáculo do mapa
+  // Pré-calcula a Bounding Box 3D de cada obstáculo e congela a matriz (são estáticos)
   for (const box of obstacles) {
     box.updateMatrixWorld(true);
+    box.matrixAutoUpdate = false;
     box.userData.bbox = new THREE.Box3().setFromObject(box);
-  }
-
-  // Recria meshes dos players remotos na nova cena
-  for (const id in remotePlayers) {
-    scene.add(remotePlayers[id].group);
   }
 }
 
-const MAP_NAMES = { arena: 'Arena Clássica', cidade: 'Cidade Pequena', deserto: 'Dunas do Deserto' };
+const MAP_NAMES = { arena: 'Arena Clássica', cidade: 'Cidade Pequena', deserto: 'Dunas do Deserto', neve: 'Campo de Neve' };
 
 // =============================================================================
 // MODELOS EM PRIMEIRA PESSOA (VIEWMODEL DE ARMAS DETALHADAS)
@@ -570,7 +586,10 @@ function createViewModel() {
 
 function updateWeaponModel() {
   if (!viewModel) return;
-  if (weaponModel) viewModel.remove(weaponModel);
+  if (weaponModel) {
+    viewModel.remove(weaponModel);
+    disposeObject(weaponModel);
+  }
   weaponModel = new THREE.Group();
 
   const w = WEAPONS[myWeaponKey] || WEAPONS.smg;
@@ -774,7 +793,15 @@ function buildPlayerMesh(color) {
   group.add(rightLegGroup);
 
   const updateHeldWeapon = (key) => {
-    while (weaponSlot.children.length > 0) weaponSlot.remove(weaponSlot.children[0]);
+    while (weaponSlot.children.length > 0) {
+      const old = weaponSlot.children[0];
+      weaponSlot.remove(old);
+      // steelMat é compartilhado com o corpo do jogador; descarta só o que é da arma
+      old.traverse((c) => {
+        if (c.geometry) c.geometry.dispose();
+        if (c.material && c.material !== steelMat) c.material.dispose();
+      });
+    }
     const w = WEAPONS[key] || WEAPONS.smg;
     const wMeshGroup = new THREE.Group();
     const wMat = new THREE.MeshStandardMaterial({ color: 0x1f242d, roughness: 0.5 });
@@ -808,42 +835,75 @@ function buildPlayerMesh(color) {
     weaponSlot.add(wMeshGroup);
   };
 
+  // Lista fixa de meshes atingíveis (o corpo, sem a arma) para o raycast de tiro
+  const hitMeshes = [];
+  [headGroup, bodyGroup, leftArmGroup, rightArmGroup, leftLegGroup, rightLegGroup].forEach((g) => {
+    g.children.forEach((c) => { if (c.isMesh) hitMeshes.push(c); });
+  });
+
   updateHeldWeapon('smg');
 
   return {
     group,
-    headGroup,
+    hitMeshes,
     leftArmGroup,
-    rightArmGroup,
     leftLegGroup,
     rightLegGroup,
-    weaponSlot,
     materials,
     updateHeldWeapon,
   };
 }
 
 function addRemotePlayer(p) {
-  if (remotePlayers[p.id]) return;
+  if (remotePlayers[p.id]) return remotePlayers[p.id];
   const pm = buildPlayerMesh(colorFromId(p.id));
-  const spawnY = (p.y || 1.6) - PLAYER_HEIGHT;
-  pm.group.position.set(p.x || 0, spawnY, p.z || 0);
+  const feetY = (p.y || PLAYER_HEIGHT) - PLAYER_HEIGHT;
+  pm.group.position.set(p.x || 0, feetY, p.z || 0);
+  pm.group.rotation.y = p.rotY || 0;
+  pm.group.visible = !!p.alive;
+  if (p.weaponKey) pm.updateHeldWeapon(p.weaponKey);
   scene.add(pm.group);
-  remotePlayers[p.id] = {
+
+  // Nome + barra de vida (elemento reaproveitado a cada frame)
+  const tag = document.createElement('div');
+  tag.className = 'nameTag';
+  tag.style.display = 'none';
+  const tagName = document.createElement('div');
+  tagName.textContent = p.name || 'Jogador';
+  const healthBar = document.createElement('div');
+  healthBar.className = 'enemyHealth';
+  const healthFill = document.createElement('div');
+  healthFill.className = 'enemyHealthFill';
+  healthBar.appendChild(healthFill);
+  tag.append(tagName, healthBar);
+  nameTagsDiv.appendChild(tag);
+
+  const rp = {
     ...pm,
-    targetPos: new THREE.Vector3(p.x || 0, spawnY, p.z || 0),
-    targetRotY: p.rotY || 0,
-    data: p,
+    buffer: [], // snapshots { t, x, y, z, rotY } para interpolação
+    data: { id: p.id, name: p.name || 'Jogador', health: p.health ?? 100, alive: !!p.alive, weaponKey: p.weaponKey || 'smg' },
     animTime: 0,
     flashTimeout: null,
+    tag, tagName, healthFill,
+    losVisible: true,
+    losCheckAt: 0,
   };
+  remotePlayers[p.id] = rp;
+  return rp;
 }
 
 function removeRemotePlayer(id) {
-  if (remotePlayers[id]) {
-    scene.remove(remotePlayers[id].group);
-    delete remotePlayers[id];
-  }
+  const rp = remotePlayers[id];
+  if (!rp) return;
+  clearTimeout(rp.flashTimeout);
+  scene.remove(rp.group);
+  disposeObject(rp.group);
+  rp.tag.remove();
+  delete remotePlayers[id];
+}
+
+function clearRemotePlayers() {
+  for (const id in remotePlayers) removeRemotePlayer(id);
 }
 
 function flashPlayerRed(rp) {
@@ -866,7 +926,17 @@ function getRemotePlayerMuzzlePos(rp) {
 // =============================================================================
 // REDE (SOCKET.IO)
 // =============================================================================
+const MOVE_SEND_INTERVAL = 1000 / 30; // envia posição a 30Hz (antes: todo frame)
+const INTERP_DELAY = 100;             // ms de atraso para interpolar entre snapshots
+const TELEPORT_DISTANCE = 6;          // acima disso não interpola (respawn)
+let serverTimeOffset = null;          // serverTime - performance.now(), suavizado
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 function connectSocket(name) {
+  myName = name;
   socket = io({ transports: ['websocket', 'polling'], upgrade: true });
 
   const updateNetworkStatus = () => {
@@ -879,29 +949,35 @@ function connectSocket(name) {
   socket.on('connect', () => {
     updateNetworkStatus();
     socket.io.engine.on('upgrade', updateNetworkStatus);
+    // Entra (ou entra de novo após uma queda de conexão)
+    socket.emit('join', { name: myName, loadout: myLoadout });
   });
   socket.on('disconnect', () => {
     const status = document.getElementById('networkStatus');
     status.textContent = 'Reconectando...';
     status.className = '';
+    myAlive = false;
+    controls.unlock();
   });
 
   socket.on('gameInfo', (info) => {
     gameStatus = info.status;
-    if (info.currentMap) currentMapId = info.currentMap;
     if (info.status === 'playing') updateTimerHUD(info.timeLeft);
     if (info.inviteUrl) setInviteUrl(info.inviteUrl);
   });
 
   socket.on('init', (data) => {
     myId = data.id;
-    if (data.game) {
-      gameStatus = data.game.status;
-      loadMap(data.game.currentMap);
-    }
+    mySpawnSeq = data.seq || 0;
+    serverTimeOffset = null;
+    clearRemotePlayers();
+    gameStatus = data.game.status;
+    loadMap(data.game.currentMap);
+    if (data.game.mapName) document.getElementById('mapName').textContent = data.game.mapName;
+    if (gameStatus === 'playing') updateTimerHUD(data.game.timeLeft);
+
     for (const id in data.players) {
-      if (id === myId) continue;
-      addRemotePlayer(data.players[id]);
+      if (id !== myId) addRemotePlayer(data.players[id]);
     }
     const me = data.players[myId];
     if (me) {
@@ -909,12 +985,7 @@ function connectSocket(name) {
       myAmmo = me.ammo || {};
       myHealth = me.health;
       myAlive = !!me.alive;
-      if (myAlive) {
-        camera.position.set(me.x, me.y, me.z);
-        cameraYaw = me.rotY || 0;
-        cameraPitch = 0;
-        applyCameraRotation();
-      }
+      if (myAlive) placeLocalPlayer(me.x, me.y, me.z, me.rotY);
       updateWeaponModel();
     }
     joined = true;
@@ -923,30 +994,59 @@ function connectSocket(name) {
   });
 
   socket.on('playerJoined', (p) => {
-    if (p.id === myId) return;
-    addRemotePlayer({ id: p.id, x: 0, z: 0 });
+    if (p.id !== myId) addRemotePlayer(p);
   });
 
   socket.on('playerLeft', (id) => removeRemotePlayer(id));
 
-  socket.on('state', (snapshot) => {
-    for (const id in snapshot) {
-      if (id === myId) continue;
-      if (!remotePlayers[id]) addRemotePlayer(snapshot[id]);
-      const rp = remotePlayers[id];
-      const feetY = (snapshot[id].y || 1.6) - PLAYER_HEIGHT;
-      rp.targetPos.set(snapshot[id].x, feetY, snapshot[id].z);
-      rp.targetRotY = snapshot[id].rotY;
-      if (rp.data.weaponKey !== snapshot[id].weaponKey) {
-        rp.updateHeldWeapon(snapshot[id].weaponKey);
+  socket.on('scoreboard', (rows) => {
+    for (const row of rows) {
+      const rp = remotePlayers[row.id];
+      if (rp && rp.data.name !== row.name) {
+        rp.data.name = row.name;
+        rp.tagName.textContent = row.name;
       }
-      rp.data = snapshot[id];
-      rp.group.visible = snapshot[id].alive;
     }
-    updateScoreboardMini(snapshot);
+    updateScoreboardMini(rows);
   });
 
+  // Snapshot compacto: { t, p: [[id, x, y, z, rotY, alive, weaponKey, health], ...] }
+  socket.on('state', ({ t, p: list }) => {
+    const sample = t - performance.now();
+    if (serverTimeOffset === null || sample > serverTimeOffset) serverTimeOffset = sample;
+    else serverTimeOffset += (sample - serverTimeOffset) * 0.02;
+
+    for (const [id, x, y, z, rotY, alive, weaponKey, health] of list) {
+      if (id === myId) continue;
+      const rp = remotePlayers[id] || addRemotePlayer({ id, x, y, z, rotY, alive, weaponKey, health });
+      const feetY = y - PLAYER_HEIGHT;
+      const last = rp.buffer[rp.buffer.length - 1];
+      const wasAlive = rp.data.alive;
+
+      // Respawn ou salto grande: limpa o histórico e posiciona direto (sem "deslizar")
+      if (!last || (alive && !wasAlive) || Math.hypot(x - last.x, z - last.z, feetY - last.y) > TELEPORT_DISTANCE) {
+        rp.buffer.length = 0;
+        rp.group.position.set(x, feetY, z);
+        rp.group.rotation.y = rotY;
+      }
+      if (!last || t > last.t) rp.buffer.push({ t, x, y: feetY, z, rotY });
+      if (rp.buffer.length > 20) rp.buffer.shift();
+
+      if (rp.data.weaponKey !== weaponKey) rp.updateHeldWeapon(weaponKey);
+      rp.data.weaponKey = weaponKey;
+      rp.data.health = health;
+      rp.data.alive = !!alive;
+      rp.group.visible = !!alive;
+    }
+  });
+
+  // Ressincronização de munição (ex.: servidor recusou um tiro)
   socket.on('ammoUpdate', ({ ammo }) => {
+    myAmmo = ammo;
+    updateWeaponHUD();
+  });
+
+  socket.on('reloadDone', ({ ammo }) => {
     myAmmo = ammo;
     reloading = false;
     updateWeaponHUD();
@@ -962,15 +1062,16 @@ function connectSocket(name) {
     updateWeaponModel();
   });
 
-  socket.on('playerShot', ({ id, weaponKey, origin, hitPos }) => {
+  socket.on('playerShot', ({ id, weaponKey, hitPos }) => {
     const rp = remotePlayers[id];
-    if (rp && rp.group.visible) {
-      const from = getRemotePlayerMuzzlePos(rp);
-      const to = hitPos ? new THREE.Vector3(hitPos.x, hitPos.y, hitPos.z) : from.clone().add(new THREE.Vector3(0, 0, -100).applyAxisAngle(new THREE.Vector3(0, 1, 0), rp.group.rotation.y));
-      const w = WEAPONS[weaponKey] || WEAPONS.smg;
-      spawnBulletTracer(from, to, w.tracerColor || 0xffea55);
-      playShotSound(w, 0.04);
-    }
+    if (!rp || !rp.group.visible) return;
+    const from = getRemotePlayerMuzzlePos(rp);
+    const to = hitPos
+      ? new THREE.Vector3(hitPos.x, hitPos.y, hitPos.z)
+      : from.clone().add(new THREE.Vector3(0, 0, -100).applyAxisAngle(UP, rp.group.rotation.y));
+    const w = WEAPONS[weaponKey] || WEAPONS.smg;
+    spawnBulletTracer(from, to, w.tracerColor || 0xffea55);
+    playShotSound(w, weaponKey, 0.04);
   });
 
   socket.on('playerDamaged', ({ id, health, attackerId, damage, headshot, attackerPos }) => {
@@ -1003,128 +1104,46 @@ function connectSocket(name) {
     if (remotePlayers[id]) remotePlayers[id].data.health = health;
   });
 
-  socket.on('playerDied', ({ id, killerId, killerName, damage, headshot, attackerPos }) => {
+  socket.on('playerDied', ({ id, killerId, killerName, damage, headshot, attackerPos, respawnIn }) => {
     if (id === myId) {
       myAlive = false;
       myHealth = 0;
+      reloading = false;
+      mouseHeld = false;
+      velocity.set(0, 0, 0);
       updateHealthHUD();
       controls.unlock();
       setRegenActive(false);
       detachGrapple(false);
       showDirectionalDamageIndicator(attackerPos);
-
-      // Show death screen with 5s countdown
-      const deathScreen = document.getElementById('deathScreen');
-      const killerNameEl = document.getElementById('deathKillerName');
-      const respawnBtn = document.getElementById('respawnBtn');
-      if (deathScreen && killerNameEl && respawnBtn) {
-        killerNameEl.textContent = killerName || '—';
-        deathScreen.classList.remove('hidden');
-        let count = 5;
-        const el = document.getElementById('deathCountdown');
-        if (el) el.textContent = count;
-        deathCountdownInterval = setInterval(() => {
-          count -= 1;
-          if (el) el.textContent = count;
-          if (count <= 0) {
-            clearInterval(deathCountdownInterval);
-            deathCountdownInterval = null;
-          }
-        }, 1000);
-
-        respawnBtn.onclick = () => {
-          count = 0;
-          if (el) el.textContent = count;
-
-          clearInterval(deathCountdownInterval);
-          deathCountdownInterval = null;
-
-          // Esconde a tela de morte imediatamente
-          deathScreen.classList.add('hidden');
-
-          // AVISA O SERVIDOR: "Quero reviver"
-          socket.emit('requestInstantRespawn');
-        };
-
-      }
+      showDeathScreen(killerName, respawnIn || 5000);
     }
     if (remotePlayers[id]) {
-      flashPlayerRed(remotePlayers[id]);
+      remotePlayers[id].data.alive = false;
+      remotePlayers[id].group.visible = false;
     }
-    if (killerId === myId) {
+    if (killerId === myId && id !== myId) {
       showHitmarker(!!headshot);
       showDamageNumber(id, damage, !!headshot, true);
       playHitmarkerSound(true);
     }
-    // console.log(" Player died: ", id, " Killer: ", killerId, " Damage: ", damage, " Headshot: ", headshot, " attackerPos: ", attackerPos);
   });
 
-  socket.on('respawned', ({ x, y, z, ammo, weaponKey, health, rotY }) => {
-    // Cliente-side validation: verifica se o spawn está colidindo com obstáculos locais.
-    const playerRadius = 0.6;
-    const playerBottom = y - 0.1;
-    const playerTop = y + 1.6;
-    function localSpawnCollides(px, pz) {
-      for (const o of obstacles) {
-        if (!o.geometry || !o.geometry.parameters) continue;
-        const params = o.geometry.parameters;
-        // Suporta BoxGeometry e Cylinder aproximado como caixa
-        let halfW = (params.width || params.radiusTop * 2 || 1) / 2;
-        let halfD = (params.depth || params.radiusTop * 2 || 1) / 2;
-        const ox = o.position.x;
-        const oz = o.position.z;
-        const oy = o.position.y;
-        const minX = ox - halfW;
-        const maxX = ox + halfW;
-        const minZ = oz - halfD;
-        const maxZ = oz + halfD;
-        const minY = oy - (params.height || 1) / 2;
-        const maxY = oy + (params.height || 1) / 2;
-        if (px + playerRadius < minX) continue;
-        if (px - playerRadius > maxX) continue;
-        if (pz + playerRadius < minZ) continue;
-        if (pz - playerRadius > maxZ) continue;
-        if (playerTop < minY) continue;
-        if (playerBottom > maxY) continue;
-        return true;
-      }
-      return false;
-    }
-
-    // Retry guard para evitar loop infinito
-    window._respawnRetries = window._respawnRetries || 0;
-    if (localSpawnCollides(x, z) && window._respawnRetries < 3) {
-      console.warn('[client] spawn collides locally, requesting retry', x, z);
-      socket.emit('badSpawn', { x, z });
-      window._respawnRetries += 1;
-      socket.emit('requestInstantRespawn');
-      return; // aguarda novo spawn
-    }
-    // Reset retries ao aceitar spawn
-    window._respawnRetries = 0;
-
+  socket.on('respawned', ({ x, y, z, rotY, ammo, weaponKey, health, seq }) => {
+    mySpawnSeq = seq;
     myAlive = true;
     myAmmo = ammo;
     myWeaponKey = weaponKey;
-    myHealth = health !== undefined ? health : 100;
-    camera.position.set(x, y, z);
-    cameraYaw = rotY !== undefined ? rotY : cameraYaw;
-    cameraPitch = 0;
-    applyCameraRotation();
+    myHealth = health ?? 100;
+    reloading = false;
+    placeLocalPlayer(x, y, z, rotY);
     setRegenActive(false);
     detachGrapple(false);
     updateWeaponHUD();
     updateWeaponModel();
     updateHealthHUD();
-
-    // Hide death screen and clear interval
-    const deathScreen = document.getElementById('deathScreen');
-    if (deathScreen) deathScreen.classList.add('hidden');
-    if (deathCountdownInterval) {
-      clearInterval(deathCountdownInterval);
-      deathCountdownInterval = null;
-    }
-    if (gameStatus === 'playing') controls.lock();
+    hideDeathScreen();
+    if (gameStatus === 'playing' && !isAnyModalOpen()) controls.lock();
   });
 
   socket.on('killFeed', ({ killerName, victimName, weapon, headshot }) => {
@@ -1140,7 +1159,9 @@ function connectSocket(name) {
   socket.on('matchStarted', ({ mapId, mapName, duration }) => {
     gameStatus = 'playing';
     loadMap(mapId);
+    if (mapName) document.getElementById('mapName').textContent = mapName;
     updateTimerHUD(duration);
+    clearInterval(voteTimerInterval);
     document.getElementById('endScreen').classList.add('hidden');
     document.getElementById('voteScreen').classList.add('hidden');
     document.getElementById('hud').classList.remove('hidden');
@@ -1148,23 +1169,31 @@ function connectSocket(name) {
 
   socket.on('matchEnded', ({ scoreboard }) => {
     gameStatus = 'ended';
+    myAlive = false;
+    mouseHeld = false;
     controls.unlock();
-    const body = document.getElementById('finalScoreBody');
-    body.innerHTML = scoreboard
-      .map((p) => `<tr><td>${p.name}</td><td>${p.kills}</td><td>${p.deaths}</td></tr>`)
+    hideDeathScreen();
+    detachGrapple(false);
+    document.getElementById('finalScoreBody').innerHTML = scoreboard
+      .map((p) => `<tr><td>${escapeHtml(p.name)}</td><td>${p.kills}</td><td>${p.deaths}</td></tr>`)
       .join('');
     document.getElementById('endScreen').classList.remove('hidden');
   });
 
   socket.on('voteStart', ({ options, duration }) => {
     gameStatus = 'voting';
+    hideDeathScreen();
     document.getElementById('endScreen').classList.add('hidden');
     const optWrap = document.getElementById('voteOptions');
     optWrap.innerHTML = '';
     options.forEach((opt) => {
       const div = document.createElement('div');
       div.className = 'voteOption';
-      div.innerHTML = `<span>${opt.name}</span><span>Votar</span>`;
+      const label = document.createElement('span');
+      label.textContent = opt.name;
+      const action = document.createElement('span');
+      action.textContent = 'Votar';
+      div.append(label, action);
       div.addEventListener('click', () => {
         socket.emit('vote', { mapId: opt.id });
         [...optWrap.children].forEach((c) => c.classList.remove('voted'));
@@ -1173,22 +1202,61 @@ function connectSocket(name) {
       optWrap.appendChild(div);
     });
     document.getElementById('voteScreen').classList.remove('hidden');
-    if (voteTimerInterval) clearInterval(voteTimerInterval);
-    let t = duration;
-    const timerEl = document.getElementById('voteTimer');
-    timerEl.textContent = `Votação encerra em ${t}s`;
-    voteTimerInterval = setInterval(() => {
-      t -= 1;
-      timerEl.textContent = `Votação encerra em ${Math.max(t, 0)}s`;
-      if (t <= 0) clearInterval(voteTimerInterval);
-    }, 1000);
+    setVoteTimer(duration);
   });
 
-  socket.on('voteTime', ({ timeLeft }) => {
-    document.getElementById('voteTimer').textContent = `Votação encerra em ${Math.max(timeLeft, 0)}s`;
-  });
+  socket.on('voteTime', ({ timeLeft }) => setVoteTimer(timeLeft));
+}
 
-  socket.emit('join', { name, loadout: myLoadout });
+function setVoteTimer(seconds) {
+  document.getElementById('voteTimer').textContent = `Votação encerra em ${Math.max(seconds, 0)}s`;
+}
+
+// Posiciona o jogador local e zera a física (evita herdar velocidade da morte)
+function placeLocalPlayer(x, y, z, rotY) {
+  camera.position.set(x, y, z);
+  velocity.set(0, 0, 0);
+  onground = false;
+  cameraYaw = rotY ?? cameraYaw;
+  cameraPitch = 0;
+  applyCameraRotation();
+  lastMoveSent = 0;
+}
+
+// =============================================================================
+// TELA DE MORTE (CONTAGEM DE RESPAWN)
+// =============================================================================
+// A contagem é calculada a partir de um horário-alvo fixo, então nunca acumula
+// intervalos duplicados nem fica negativa.
+function showDeathScreen(killerName, respawnInMs) {
+  const deathScreen = document.getElementById('deathScreen');
+  const countdownEl = document.getElementById('deathCountdown');
+  document.getElementById('deathKillerName').textContent = killerName || '—';
+  deathScreen.classList.remove('hidden');
+
+  const respawnAt = performance.now() + respawnInMs;
+  const tick = () => {
+    const remaining = Math.max(0, Math.ceil((respawnAt - performance.now()) / 1000));
+    countdownEl.textContent = remaining;
+    if (remaining <= 0) stopDeathCountdown();
+  };
+  stopDeathCountdown();
+  tick();
+  deathCountdownInterval = setInterval(tick, 250);
+
+  document.getElementById('respawnBtn').onclick = () => {
+    socket.emit('requestInstantRespawn');
+  };
+}
+
+function stopDeathCountdown() {
+  if (deathCountdownInterval) clearInterval(deathCountdownInterval);
+  deathCountdownInterval = null;
+}
+
+function hideDeathScreen() {
+  stopDeathCountdown();
+  document.getElementById('deathScreen').classList.add('hidden');
 }
 
 // =============================================================================
@@ -1297,20 +1365,18 @@ function showDamageNumber(id, damage, headshot, eliminated = false) {
   setTimeout(() => el.remove(), 750);
 }
 
-function updateScoreboardMini(snapshot) {
-  const box = document.getElementById('scoreRowsMini');
-  const rows = Object.values(snapshot)
-    .sort((a, b) => (b.kills || 0) - (a.kills || 0))
-    .map((p) => `<div class="scoreRow"><span>${p.name}${p.id === myId ? ' (você)' : ''}</span><span>${p.kills || 0}/${p.deaths || 0}</span></div>`)
+// Atualizado só quando o placar muda (antes: 20x por segundo)
+function updateScoreboardMini(rows) {
+  document.getElementById('scoreRowsMini').innerHTML = rows
+    .map((p) => `<div class="scoreRow"><span>${escapeHtml(p.name)}${p.id === myId ? ' (você)' : ''}</span><span>${p.kills || 0}/${p.deaths || 0}</span></div>`)
     .join('');
-  box.innerHTML = rows;
 }
-
-let tabHeld = false;
 
 // =============================================================================
 // ROTA DA BALA (BULLET TRACERS) & EFEITOS DE IMPACTO
 // =============================================================================
+const SPARK_GEOMETRY = new THREE.SphereGeometry(0.12, 6, 6);
+
 function spawnBulletTracer(from, to, color = 0xffea55) {
   const points = [from.clone(), to.clone()];
   const geo = new THREE.BufferGeometry().setFromPoints(points);
@@ -1318,13 +1384,27 @@ function spawnBulletTracer(from, to, color = 0xffea55) {
   const line = new THREE.Line(geo, mat);
   scene.add(line);
 
-  // Faísca de impacto no destino
+  // Faísca de impacto no destino (geometria compartilhada entre todas as faíscas)
   const sparkMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-  const spark = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 6), sparkMat);
+  const spark = new THREE.Mesh(SPARK_GEOMETRY, sparkMat);
   spark.position.copy(to);
   scene.add(spark);
 
   bulletTracers.push({ mesh: line, spark, life: 0.16, maxLife: 0.16 });
+}
+
+function removeBulletTracer(i) {
+  const t = bulletTracers[i];
+  scene.remove(t.mesh);
+  scene.remove(t.spark);
+  t.mesh.geometry.dispose();
+  t.mesh.material.dispose();
+  t.spark.material.dispose();
+  bulletTracers.splice(i, 1);
+}
+
+function clearBulletTracers() {
+  for (let i = bulletTracers.length - 1; i >= 0; i--) removeBulletTracer(i);
 }
 
 function updateBulletTracers(dt) {
@@ -1332,13 +1412,7 @@ function updateBulletTracers(dt) {
     const t = bulletTracers[i];
     t.life -= dt;
     if (t.life <= 0) {
-      scene.remove(t.mesh);
-      scene.remove(t.spark);
-      t.mesh.geometry.dispose();
-      t.mesh.material.dispose();
-      t.spark.geometry.dispose();
-      t.spark.material.dispose();
-      bulletTracers.splice(i, 1);
+      removeBulletTracer(i);
     } else {
       const progress = t.life / t.maxLife;
       t.mesh.material.opacity = progress;
@@ -1404,16 +1478,14 @@ document.addEventListener('keydown', (e) => {
   // Se o modal de trocar armas estiver aberto, fecha com Esc
   const loadoutModal = document.getElementById('changeLoadoutModal');
   if (loadoutModal && !loadoutModal.classList.contains('hidden')) {
-    if (e.code === 'Escape') {
-      toggleInGameWeaponSelect(false);
-      if (myAlive) controls.lock();
-    }
+    if (e.code === 'Escape') closeInGameLoadoutModal();
     return;
   }
 
+  // Fora da partida (ex.: digitando o nome no lobby) as teclas do jogo não valem
+  if (!joined || e.target instanceof HTMLInputElement) return;
+
   const kb = userSettings.keybinds;
-  const isLoadoutKey = kb.loadout && e.code === kb.loadout;
-  const isGrappleKey = kb.grapple && e.code === kb.grapple;
   if (e.code === kb.forward) move.forward = true;
   else if (e.code === kb.back) move.back = true;
   else if (e.code === kb.left) move.left = true;
@@ -1424,30 +1496,20 @@ document.addEventListener('keydown', (e) => {
   else if (e.code === kb.slot2) trySwitchWeapon(1);
   else if (e.code === kb.knife) trySwitchWeapon('knife');
   else if (e.code === kb.grapple) tryGrappleSwitch();
-  else if (e.code === kb.reset) tryReset(myId);
+  else if (e.code === kb.reset) tryReset();
   else if (e.code === kb.loadout) {
     e.preventDefault();
-    document.getElementById('changeLoadoutModal').classList.remove('hidden');
-    controls.unlock();
-    // toggleInGameWeaponSelect(true);
+    openInGameLoadoutModal();
   }
   else if (e.code === kb.score) {
     e.preventDefault();
-    tabHeld = true;
     document.getElementById('scoreboardMini').classList.add('show');
   }
 });
 
-function tryReset(id) {
-  // console.log("ta chegando aqui?, id: ", id)
-  socket.emit('playerDied', {
-    id: id,
-    killerId: id,
-    killerName: 'Reset',
-    damage: 101,
-    headshot: false,
-    attackerPos: { x: 0, y: 0, z: 0 },
-  });
+// Tecla de reset: o servidor decide a morte (antes o cliente "morria" só localmente)
+function tryReset() {
+  if (myAlive && gameStatus === 'playing') socket.emit('suicide');
 }
 
 document.addEventListener('keyup', (e) => {
@@ -1458,17 +1520,22 @@ document.addEventListener('keyup', (e) => {
   else if (e.code === kb.left) move.left = false;
   else if (e.code === kb.right) move.right = false;
   else if (e.code === kb.jump) move.jumpHeld = false;
-  else if (e.code === kb.score) {
-    tabHeld = false;
-    document.getElementById('scoreboardMini').classList.remove('show');
-  }
+  else if (e.code === kb.score) document.getElementById('scoreboardMini').classList.remove('show');
+});
+
+// Solta todas as teclas ao perder o foco (evita andar sozinho ao voltar para a aba)
+window.addEventListener('blur', () => {
+  move.forward = move.back = move.left = move.right = move.jumpHeld = false;
+  mouseHeld = false;
+  aimHeld = false;
 });
 
 function trySwitchWeapon(slot) {
   if (!myAlive) return;
   const key = slot === 'knife' ? 'knife' : myLoadout[slot];
-  if (!key) return;
+  if (!key || key === myWeaponKey) return;
   detachGrapple(false);
+  reloading = false; // trocar de arma cancela a recarga (igual no servidor)
   myWeaponKey = key;
   socket.emit('switchWeapon', { key });
   updateWeaponHUD();
@@ -1540,21 +1607,20 @@ function updateGrappleRope() {
 // =============================================================================
 // COLISÃO 3D REAL (SUPORTA PASSAR POR BAIXO DE PONTES/PLATAFORMAS ELEVADAS)
 // =============================================================================
-function collidesWithObstacles(pos) {
+function collidesWithObstacles(x, y, z) {
   const pRadius = 0.28;
-  const playerFeet = pos.y - PLAYER_HEIGHT + 0.05;
-  const playerHead = pos.y + 0.15;
+  const playerFeet = y - PLAYER_HEIGHT + 0.05;
+  const playerHead = y + 0.15;
 
   for (let i = 0; i < obstacles.length; i++) {
-    const box = obstacles[i];
-    const bbox = box.userData.bbox || new THREE.Box3().setFromObject(box);
+    const bbox = obstacles[i].userData.bbox;
 
     // Verifica sobreposição horizontal (X/Z)
     if (
-      pos.x + pRadius > bbox.min.x &&
-      pos.x - pRadius < bbox.max.x &&
-      pos.z + pRadius > bbox.min.z &&
-      pos.z - pRadius < bbox.max.z
+      x + pRadius > bbox.min.x &&
+      x - pRadius < bbox.max.x &&
+      z + pRadius > bbox.min.z &&
+      z - pRadius < bbox.max.z
     ) {
       // 1. Se os pés do jogador estão acima do topo da plataforma (andando por cima)
       if (playerFeet >= bbox.max.y - 0.25) continue;
@@ -1574,8 +1640,7 @@ function groundHeightAt(pos) {
   const playerFeet = pos.y - PLAYER_HEIGHT;
 
   for (let i = 0; i < obstacles.length; i++) {
-    const box = obstacles[i];
-    const bbox = box.userData.bbox || new THREE.Box3().setFromObject(box);
+    const bbox = obstacles[i].userData.bbox;
     if (
       pos.x + pRadius > bbox.min.x &&
       pos.x - pRadius < bbox.max.x &&
@@ -1591,14 +1656,19 @@ function groundHeightAt(pos) {
   return h;
 }
 
-function updateMovement(dt) {
-  const forwardVec = new THREE.Vector3();
-  camera.getWorldDirection(forwardVec);
-  forwardVec.y = 0;
-  forwardVec.normalize();
-  const rightVec = new THREE.Vector3().crossVectors(forwardVec, new THREE.Vector3(0, 1, 0));
+// Vetores reaproveitados a cada frame (evita criar lixo para o GC)
+const UP = new THREE.Vector3(0, 1, 0);
+const _forwardVec = new THREE.Vector3();
+const _rightVec = new THREE.Vector3();
+const _wish = new THREE.Vector3();
+const _toAnchor = new THREE.Vector3();
+let lastMoveSent = 0;
 
-  const wish = new THREE.Vector3();
+function updateMovement(dt) {
+  const forwardVec = _forwardVec.set(-Math.sin(cameraYaw), 0, -Math.cos(cameraYaw));
+  const rightVec = _rightVec.crossVectors(forwardVec, UP);
+
+  const wish = _wish.set(0, 0, 0);
   if (move.forward) wish.add(forwardVec);
   if (move.back) wish.sub(forwardVec);
   if (move.right) wish.add(rightVec);
@@ -1607,7 +1677,7 @@ function updateMovement(dt) {
 
   // Tratamento da puxada contínua do Gancho
   if (activeGrapple.active) {
-    const toAnchor = activeGrapple.point.clone().sub(camera.position);
+    const toAnchor = _toAnchor.copy(activeGrapple.point).sub(camera.position);
     const distToAnchor = toAnchor.length();
 
     // 1. Ao apertar o botão de pulo (Space), solta o gancho com impulso
@@ -1618,7 +1688,7 @@ function updateMovement(dt) {
     else if (distToAnchor < 1.8) {
       detachGrapple(false);
     } else {
-      const pullDir = toAnchor.clone().normalize();
+      const pullDir = toAnchor.normalize();
       const PULL_SPEED = 24.0;
       velocity.x = THREE.MathUtils.damp(velocity.x, pullDir.x * PULL_SPEED, 8, dt);
       velocity.y = THREE.MathUtils.damp(velocity.y, pullDir.y * PULL_SPEED, 8, dt);
@@ -1651,23 +1721,20 @@ function updateMovement(dt) {
     velocity.y += GRAVITY * dt;
   }
 
-  const nextPos = camera.position.clone();
-  nextPos.x += velocity.x * dt;
-  nextPos.z += velocity.z * dt;
-
+  const pos = camera.position;
   // Limites perimetrais do mapa
-  nextPos.x = THREE.MathUtils.clamp(nextPos.x, -mapBounds, mapBounds);
-  nextPos.z = THREE.MathUtils.clamp(nextPos.z, -mapBounds, mapBounds);
+  const nextX = THREE.MathUtils.clamp(pos.x + velocity.x * dt, -mapBounds, mapBounds);
+  const nextZ = THREE.MathUtils.clamp(pos.z + velocity.z * dt, -mapBounds, mapBounds);
 
   let collidedWall = false;
-  if (!collidesWithObstacles(new THREE.Vector3(nextPos.x, camera.position.y, camera.position.z))) {
-    camera.position.x = nextPos.x;
+  if (!collidesWithObstacles(nextX, pos.y, pos.z)) {
+    pos.x = nextX;
   } else {
     velocity.x = 0;
     collidedWall = true;
   }
-  if (!collidesWithObstacles(new THREE.Vector3(camera.position.x, camera.position.y, nextPos.z))) {
-    camera.position.z = nextPos.z;
+  if (!collidesWithObstacles(pos.x, pos.y, nextZ)) {
+    pos.z = nextZ;
   } else {
     velocity.z = 0;
     collidedWall = true;
@@ -1684,8 +1751,7 @@ function updateMovement(dt) {
   // Movimentação vertical (com verificação de teto ao pular debaixo de plataformas)
   const targetY = camera.position.y + velocity.y * dt;
   if (velocity.y > 0) {
-    const headTest = new THREE.Vector3(camera.position.x, targetY, camera.position.z);
-    if (collidesWithObstacles(headTest)) {
+    if (collidesWithObstacles(camera.position.x, targetY, camera.position.z)) {
       velocity.y = 0; // Bate no teto
       if (activeGrapple.active) detachGrapple(false);
     } else {
@@ -1707,7 +1773,22 @@ function updateMovement(dt) {
     onground = false;
   }
 
-  socket.emit('move', { x: camera.position.x, y: camera.position.y, z: camera.position.z, rotY: cameraYaw });
+  sendMove();
+}
+
+// Envia a posição no máximo a 30Hz, com a sequência de spawn atual
+function sendMove() {
+  const now = performance.now();
+  if (now - lastMoveSent < MOVE_SEND_INTERVAL) return;
+  lastMoveSent = now;
+  const p = camera.position;
+  socket.volatile.emit('move', {
+    x: Math.round(p.x * 100) / 100,
+    y: Math.round(p.y * 100) / 100,
+    z: Math.round(p.z * 100) / 100,
+    rotY: Math.round(cameraYaw * 1000) / 1000,
+    seq: mySpawnSeq,
+  });
 }
 
 // =============================================================================
@@ -1735,6 +1816,13 @@ document.addEventListener('mouseup', (e) => {
 });
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
+const aimUi = {
+  scope: document.getElementById('sniperScope'),
+  crosshair: document.getElementById('crosshair'),
+  scoped: false,
+  aiming: false,
+};
+
 function updateAim(dt) {
   if (!camera || !viewModel) return;
   const weapon = WEAPONS[myWeaponKey];
@@ -1742,32 +1830,35 @@ function updateAim(dt) {
   const isSniper = myWeaponKey === 'sniper';
 
   // Mira telescópica / Scope especial para Sniper
-  const sniperScopeEl = document.getElementById('sniperScope');
-  const crosshairEl = document.getElementById('crosshair');
-
-  if (canAim && isSniper) {
-    sniperScopeEl.classList.remove('hidden');
-    crosshairEl.classList.add('hidden');
-    viewModel.visible = false;
-  } else {
-    sniperScopeEl.classList.add('hidden');
-    crosshairEl.classList.remove('hidden');
-    if (viewModel && controls && controls.isLocked && myAlive) viewModel.visible = true;
+  const scoped = canAim && isSniper;
+  if (scoped !== aimUi.scoped) {
+    aimUi.scoped = scoped;
+    aimUi.scope.classList.toggle('hidden', !scoped);
+    aimUi.crosshair.classList.toggle('hidden', scoped);
   }
+  if (scoped) viewModel.visible = false;
+  else if (controls.isLocked && myAlive) viewModel.visible = true;
 
   const targetFov = canAim ? (isSniper ? 22 : 54) : 78;
   const targetX = canAim ? (isSniper ? 0 : -0.26) : 0;
   const targetY = canAim ? (isSniper ? 0 : 0.12) : 0;
   const targetZ = canAim ? 0.1 : 0;
 
-  camera.fov = THREE.MathUtils.damp(camera.fov, targetFov, 18, dt);
-  camera.updateProjectionMatrix();
+  // Só recalcula a matriz de projeção enquanto o FOV está mudando
+  if (Math.abs(camera.fov - targetFov) > 0.01) {
+    camera.fov = THREE.MathUtils.damp(camera.fov, targetFov, 18, dt);
+    camera.updateProjectionMatrix();
+  }
 
   viewModel.position.x = THREE.MathUtils.damp(viewModel.position.x, targetX, 20, dt);
   viewModel.position.y = THREE.MathUtils.damp(viewModel.position.y, targetY, 20, dt);
   viewModel.position.z = THREE.MathUtils.damp(viewModel.position.z, targetZ, 20, dt);
 
-  crosshairEl.classList.toggle('aiming', canAim && !isSniper);
+  const adsAiming = canAim && !isSniper;
+  if (adsAiming !== aimUi.aiming) {
+    aimUi.aiming = adsAiming;
+    aimUi.crosshair.classList.toggle('aiming', adsAiming);
+  }
 }
 
 function updateViewModel(dt) {
@@ -1829,17 +1920,16 @@ function doShoot(w) {
   raycaster.set(camera.position, dir);
   raycaster.far = w.isMelee ? 3.2 : 250;
 
-  // Alvos de jogadores
+  // Alvos de jogadores (lista de hitboxes montada uma vez por jogador)
   const playerTargets = [];
   const meshToId = new Map();
   for (const id in remotePlayers) {
-    if (!remotePlayers[id].group.visible) continue;
-    remotePlayers[id].group.traverse((child) => {
-      if (child.isMesh) {
-        playerTargets.push(child);
-        meshToId.set(child, id);
-      }
-    });
+    const rp = remotePlayers[id];
+    if (!rp.group.visible) continue;
+    for (const mesh of rp.hitMeshes) {
+      playerTargets.push(mesh);
+      meshToId.set(mesh, id);
+    }
   }
 
   // Raycast contra jogadores e obstáculos para calcular trajeto da bala
@@ -1879,7 +1969,7 @@ function doShoot(w) {
     myAmmo[myWeaponKey] = Math.max(myAmmo[myWeaponKey] - 1, 0);
     updateWeaponHUD();
   }
-  playShotSound(w);
+  playShotSound(w, myWeaponKey);
 }
 
 function doGrapple() {
@@ -1919,15 +2009,12 @@ function doGrapple() {
   onground = false;
 }
 
-// Auto-fire para armas automáticas (SMG)
-function autoFireLoop() {
-  if (mouseHeld && myAlive && controls.isLocked) {
-    const w = WEAPONS[myWeaponKey];
-    if (w && w.auto) attemptAction();
-  }
-  requestAnimationFrame(autoFireLoop);
+// Auto-fire para armas automáticas (SMG) — chamado pelo loop principal
+function updateAutoFire() {
+  if (!mouseHeld || !myAlive || !controls.isLocked) return;
+  const w = WEAPONS[myWeaponKey];
+  if (w && w.auto) attemptAction();
 }
-autoFireLoop();
 
 // =============================================================================
 // EFEITOS SONOROS PROCEDURAIS (WEB AUDIO API)
@@ -1955,18 +2042,20 @@ function playGrappleSound() {
   } catch (e) { }
 }
 
-function playShotSound(w, volume = 0.08) {
+// weaponKey é a arma de quem atirou (antes usava sempre a arma local)
+function playShotSound(w, weaponKey, volume = 0.08) {
   try {
     const ctx = getAudioContext();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.type = w.isMelee ? 'triangle' : (myWeaponKey === 'sniper' ? 'sawtooth' : 'square');
-    osc.frequency.value = w.isMelee ? 220 : (myWeaponKey === 'sniper' ? 85 : 150);
+    const isSniper = weaponKey === 'sniper';
+    osc.type = w.isMelee ? 'triangle' : (isSniper ? 'sawtooth' : 'square');
+    osc.frequency.value = w.isMelee ? 220 : (isSniper ? 85 : 150);
     gain.gain.setValueAtTime(volume, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (myWeaponKey === 'sniper' ? 0.22 : 0.1));
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (isSniper ? 0.22 : 0.1));
     osc.connect(gain).connect(ctx.destination);
     osc.start();
-    osc.stop(ctx.currentTime + (myWeaponKey === 'sniper' ? 0.23 : 0.11));
+    osc.stop(ctx.currentTime + (isSniper ? 0.23 : 0.11));
   } catch (e) { }
 }
 
@@ -2011,88 +2100,124 @@ function animate() {
 
   if (controls.isLocked && joined && myAlive && gameStatus === 'playing') {
     updateMovement(dt);
+    updateAutoFire();
   }
   updateAim(dt);
   updateViewModel(dt);
   updateBulletTracers(dt);
 
   // Efeito de trauma/tremor de câmera ao levar dano
-  if (cameraShake > 0) {
+  if (cameraShake > 0.001) {
     camera.rotation.z = (Math.random() - 0.5) * cameraShake;
     cameraShake = THREE.MathUtils.damp(cameraShake, 0, 14, dt);
   } else {
+    cameraShake = 0;
     camera.rotation.z = 0;
   }
 
-  // Atualização e interpolação dos jogadores remotos com animação de passos
-  for (const id in remotePlayers) {
-    const rp = remotePlayers[id];
-    const prevPos = rp.group.position.clone();
-    rp.group.position.lerp(rp.targetPos, 0.35);
-    rp.group.rotation.y = rp.targetRotY || 0;
-
-    const moveDist = prevPos.distanceTo(rp.group.position);
-    if (moveDist > 0.005) {
-      rp.animTime += dt * 10;
-      const legAngle = Math.sin(rp.animTime) * 0.55;
-      if (rp.leftLegGroup) rp.leftLegGroup.rotation.x = legAngle;
-      if (rp.rightLegGroup) rp.rightLegGroup.rotation.x = -legAngle;
-      if (rp.leftArmGroup) rp.leftArmGroup.rotation.x = -legAngle * 0.6;
-    } else {
-      if (rp.leftLegGroup) rp.leftLegGroup.rotation.x = THREE.MathUtils.damp(rp.leftLegGroup.rotation.x, 0, 10, dt);
-      if (rp.rightLegGroup) rp.rightLegGroup.rotation.x = THREE.MathUtils.damp(rp.rightLegGroup.rotation.x, 0, 10, dt);
-      if (rp.leftArmGroup) rp.leftArmGroup.rotation.x = THREE.MathUtils.damp(rp.leftArmGroup.rotation.x, 0, 10, dt);
-    }
-  }
-
+  updateRemotePlayers(dt);
   updateNameTags();
   renderer.render(scene, camera);
 }
 
-function updateNameTags() {
-  nameTagsDiv.innerHTML = '';
-  const viewDirection = camera.getWorldDirection(new THREE.Vector3());
-  const raycaster = new THREE.Raycaster();
+// Menor diferença entre dois ângulos (evita girar 360° ao cruzar ±PI)
+function angleLerp(a, b, t) {
+  let diff = (b - a) % (Math.PI * 2);
+  if (diff > Math.PI) diff -= Math.PI * 2;
+  if (diff < -Math.PI) diff += Math.PI * 2;
+  return a + diff * t;
+}
+
+// Interpolação por snapshots: renderiza os outros jogadores ~100ms no passado,
+// sempre entre duas posições reais recebidas do servidor. Resultado: movimento
+// suave e independente do FPS (antes: lerp fixo de 35% por frame).
+function updateRemotePlayers(dt) {
+  const renderTime = serverTimeOffset === null ? 0 : performance.now() + serverTimeOffset - INTERP_DELAY;
 
   for (const id in remotePlayers) {
     const rp = remotePlayers[id];
-    if (!rp.group.visible) continue;
+    const buf = rp.buffer;
+    if (buf.length === 0 || !rp.group.visible) continue;
 
-    const headPos = rp.group.position.clone();
-    headPos.y += 2.25;
-    const toPlayer = headPos.clone().sub(camera.position);
-    const distToPlayer = toPlayer.length();
-    const dirToPlayer = toPlayer.clone().normalize();
+    while (buf.length >= 2 && buf[1].t <= renderTime) buf.shift();
 
-    if (distToPlayer > 100 || viewDirection.dot(dirToPlayer) <= 0) continue;
+    const prevX = rp.group.position.x;
+    const prevZ = rp.group.position.z;
+    const a = buf[0];
+    const b = buf[1];
+    if (b && renderTime > a.t) {
+      const t = Math.min((renderTime - a.t) / (b.t - a.t), 1);
+      rp.group.position.set(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t);
+      rp.group.rotation.y = angleLerp(a.rotY, b.rotY, t);
+    } else {
+      rp.group.position.set(a.x, a.y, a.z);
+      rp.group.rotation.y = a.rotY;
+    }
 
-    raycaster.set(camera.position, dirToPlayer);
-    raycaster.far = distToPlayer;
-    const obstacleHits = raycaster.intersectObjects(obstacles, true);
-    const isBlockedByStructure = obstacleHits.some((hit) => hit.distance > 0.35 && hit.distance < distToPlayer - 0.25);
-    if (isBlockedByStructure) continue;
+    // Animação de passos baseada na velocidade horizontal
+    const speed = Math.hypot(rp.group.position.x - prevX, rp.group.position.z - prevZ) / Math.max(dt, 0.001);
+    if (speed > 0.5) {
+      rp.animTime += dt * Math.min(speed, 10) * 1.4;
+      const legAngle = Math.sin(rp.animTime) * 0.55;
+      rp.leftLegGroup.rotation.x = legAngle;
+      rp.rightLegGroup.rotation.x = -legAngle;
+      rp.leftArmGroup.rotation.x = -legAngle * 0.6;
+    } else {
+      rp.leftLegGroup.rotation.x = THREE.MathUtils.damp(rp.leftLegGroup.rotation.x, 0, 10, dt);
+      rp.rightLegGroup.rotation.x = THREE.MathUtils.damp(rp.rightLegGroup.rotation.x, 0, 10, dt);
+      rp.leftArmGroup.rotation.x = THREE.MathUtils.damp(rp.leftArmGroup.rotation.x, 0, 10, dt);
+    }
+  }
+}
 
-    const screenPos = headPos.project(camera);
-    if (screenPos.z < -1 || screenPos.z > 1 || Math.abs(screenPos.x) > 1 || Math.abs(screenPos.y) > 1) continue;
+// =============================================================================
+// NOMES E VIDA SOBRE OS JOGADORES
+// =============================================================================
+const LOS_CHECK_INTERVAL = 100; // ms entre testes de linha de visão por jogador
+const nameTagRaycaster = new THREE.Raycaster();
+const _viewDir = new THREE.Vector3();
+const _headPos = new THREE.Vector3();
+const _toPlayer = new THREE.Vector3();
 
-    const x = (screenPos.x * 0.5 + 0.5) * window.innerWidth;
-    const y = (-screenPos.y * 0.5 + 0.5) * window.innerHeight;
-    const tag = document.createElement('div');
-    tag.className = 'nameTag';
-    tag.style.left = `${x}px`;
-    tag.style.top = `${y}px`;
+function updateNameTags() {
+  const now = performance.now();
+  camera.getWorldDirection(_viewDir);
 
-    const name = document.createElement('div');
-    name.textContent = rp.data.name || 'Jogador';
+  for (const id in remotePlayers) {
+    const rp = remotePlayers[id];
+    let show = rp.group.visible;
 
-    const healthBar = document.createElement('div');
-    healthBar.className = 'enemyHealth';
-    const healthFill = document.createElement('div');
-    healthFill.className = 'enemyHealthFill';
-    healthFill.style.width = `${Math.max(0, Math.min(rp.data.health ?? 100, 100))}%`;
-    healthBar.appendChild(healthFill);
+    if (show) {
+      _headPos.copy(rp.group.position);
+      _headPos.y += 2.25;
+      _toPlayer.copy(_headPos).sub(camera.position);
+      const dist = _toPlayer.length();
+      _toPlayer.divideScalar(dist || 1);
+      show = dist <= 100 && _viewDir.dot(_toPlayer) > 0;
 
-    tag.append(name, healthBar);
-    nameTagsDiv.appendChild(tag);
+      // Esconde o nome atrás de paredes (raycast caro: só a cada 100ms)
+      if (show && now >= rp.losCheckAt) {
+        rp.losCheckAt = now + LOS_CHECK_INTERVAL;
+        nameTagRaycaster.set(camera.position, _toPlayer);
+        nameTagRaycaster.far = dist;
+        const hits = nameTagRaycaster.intersectObjects(obstacles, false);
+        rp.losVisible = !hits.some((hit) => hit.distance > 0.35 && hit.distance < dist - 0.25);
+      }
+      show = show && rp.losVisible;
+    }
+
+    if (show) {
+      _headPos.project(camera);
+      show = _headPos.z >= -1 && _headPos.z <= 1 && Math.abs(_headPos.x) <= 1 && Math.abs(_headPos.y) <= 1;
+    }
+
+    if (!show) {
+      if (rp.tag.style.display !== 'none') rp.tag.style.display = 'none';
+      continue;
+    }
+    rp.tag.style.display = '';
+    rp.tag.style.left = `${(_headPos.x * 0.5 + 0.5) * window.innerWidth}px`;
+    rp.tag.style.top = `${(-_headPos.y * 0.5 + 0.5) * window.innerHeight}px`;
+    rp.healthFill.style.width = `${Math.max(0, Math.min(rp.data.health ?? 100, 100))}%`;
   }
 }

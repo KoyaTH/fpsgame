@@ -3,6 +3,6 @@ services:
     name: ffa-fps-krunker
     runtime: node
     plan: free
-    buildCommand: npm run generate:obstacles && npm ci
+    buildCommand: npm ci
     startCommand: npm start
     healthCheckPath: /health
