@@ -135,16 +135,58 @@ kbd {
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; font-family: var(--font-display); }
 #hud button { pointer-events: auto; }
 
-/* Mira dinâmica (--gap muda com a dispersão) */
-#crosshair { --gap: 6px; position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
-.chLine { position: absolute; background: #fff; box-shadow: 0 0 2px rgba(0, 0, 0, 0.9); transition: transform .05s linear; }
-.chLine.top, .chLine.bottom { width: 2px; height: 9px; left: -1px; }
-.chLine.left, .chLine.right { width: 9px; height: 2px; top: -1px; }
-.chLine.top { bottom: var(--gap); }
-.chLine.bottom { top: var(--gap); }
-.chLine.left { right: var(--gap); }
-.chLine.right { left: var(--gap); }
-.chDot { position: absolute; width: 2px; height: 2px; left: -1px; top: -1px; background: #fff; box-shadow: 0 0 2px #000; }
+/* Mira na tela (crosshair). Variáveis vêm de game.js (configurações + dispersão):
+   --gap abertura, --len tamanho da linha, --thick espessura, --color cor,
+   --circle raio do círculo. data-style escolhe quais peças aparecem. */
+.crosshairShape {
+  --gap: 6px; --len: 9px; --thick: 2px; --color: #fff; --circle: 10px;
+  --outline: 0 0 0 1px rgba(0, 0, 0, 0.85);
+  position: absolute; left: 50%; top: 50%; width: 0; height: 0;
+}
+.crosshairShape.noOutline { --outline: none; }
+.crosshairShape i { position: absolute; display: block; background: var(--color); box-shadow: var(--outline); }
+.crosshairShape .chLine.top, .crosshairShape .chLine.bottom { width: var(--thick); height: var(--len); left: calc(var(--thick) / -2); }
+.crosshairShape .chLine.left, .crosshairShape .chLine.right { width: var(--len); height: var(--thick); top: calc(var(--thick) / -2); }
+.crosshairShape .chLine.top { bottom: var(--gap); }
+.crosshairShape .chLine.bottom { top: var(--gap); }
+.crosshairShape .chLine.left { right: var(--gap); }
+.crosshairShape .chLine.right { left: var(--gap); }
+.crosshairShape .chDot { width: var(--thick); height: var(--thick); left: calc(var(--thick) / -2); top: calc(var(--thick) / -2); display: none; }
+.crosshairShape .chCircle {
+  display: none; background: none; border-radius: 50%;
+  width: calc(var(--circle) * 2); height: calc(var(--circle) * 2);
+  left: calc(var(--circle) * -1); top: calc(var(--circle) * -1);
+  box-sizing: border-box; border: max(1px, calc(var(--thick) * 0.75)) solid var(--color);
+  box-shadow: var(--outline), inset var(--outline);
+}
+.crosshairShape[data-style=cruzPonto] .chDot,
+.crosshairShape[data-style=t] .chDot,
+.crosshairShape[data-style=circulo] .chDot { display: block; }
+.crosshairShape[data-style=ponto] .chLine,
+.crosshairShape[data-style=circulo] .chLine,
+.crosshairShape[data-style=t] .chLine.top { display: none; }
+.crosshairShape[data-style=ponto] .chDot { display: block; width: calc(var(--thick) * 2); height: calc(var(--thick) * 2); left: calc(var(--thick) * -1); top: calc(var(--thick) * -1); border-radius: 50%; }
+.crosshairShape[data-style=circulo] .chCircle { display: block; }
+/* Escopeta: o círculo mostra a área real dos chumbos */
+.crosshairShape.spreadCircle .chCircle { display: block; opacity: 0.55; }
+/* Mirando com a alça/red dot da arma, a mira da tela some */
+#crosshair { transition: opacity .08s; }
+#crosshair.adsHidden { opacity: 0; }
+
+/* Editor de mira nas configurações */
+.crosshairEditor { display: grid; grid-template-columns: 1fr 130px; gap: 14px; align-items: center; }
+.crosshairControls select {
+  width: 100%; padding: 7px 8px; border-radius: 7px; border: 1px solid #334155; background: #0f172a; color: var(--text); font: 600 13px var(--font-body);
+}
+.chColors { display: flex; align-items: center; gap: 6px; }
+.chColors input[type=color] { width: 34px; height: 28px; padding: 0; border: 1px solid #334155; border-radius: 6px; background: none; }
+.chSwatch { width: 20px; height: 20px; border-radius: 50%; border: 2px solid #1e293b; padding: 0; }
+.chSwatch.active { border-color: #fff; }
+.crosshairPreview {
+  position: relative; height: 130px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line);
+  background: linear-gradient(180deg, #7fb2d9 0%, #c9dbe8 48%, #b48a5a 52%, #7c5a36 100%);
+}
+@media (max-width: 860px) { .crosshairEditor { grid-template-columns: 1fr; } }
 
 /* Hitmarker em X */
 #hitmarker { position: absolute; left: 50%; top: 50%; width: 0; height: 0; opacity: 0; }

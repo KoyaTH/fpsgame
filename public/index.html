@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css?v=14" />
+<link rel="stylesheet" href="style.css?v=15" />
 </head>
 <body>
 
@@ -55,8 +55,8 @@
 
 <!-- HUD -->
 <div id="hud" class="hidden">
-  <div id="crosshair">
-    <i class="chLine top"></i><i class="chLine bottom"></i><i class="chLine left"></i><i class="chLine right"></i><i class="chDot"></i>
+  <div id="crosshair" class="crosshairShape">
+    <i class="chLine top"></i><i class="chLine bottom"></i><i class="chLine left"></i><i class="chLine right"></i><i class="chDot"></i><i class="chCircle"></i>
   </div>
   <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
   <div id="damageFlash"></div>
@@ -234,6 +234,56 @@
         <label class="checkboxLabel"><input type="checkbox" id="invertYCheck" /><span>Inverter eixo Y</span></label>
         <label class="checkboxLabel"><input type="checkbox" id="shadowsCheck" checked /><span>Sombras (desligue se o jogo estiver lento)</span></label>
       </div>
+
+      <div class="settingsSection">
+        <h3>Mira na tela (crosshair)</h3>
+        <div class="crosshairEditor">
+          <div class="crosshairControls">
+            <div class="settingRow">
+              <label for="chStyleSelect">Estilo</label>
+              <select id="chStyleSelect">
+                <option value="cruz">Cruz</option>
+                <option value="cruzPonto">Cruz com ponto</option>
+                <option value="ponto">Só o ponto</option>
+                <option value="circulo">Círculo com ponto</option>
+                <option value="t">Cruz em T</option>
+              </select>
+            </div>
+            <div class="settingRow">
+              <label for="chColorInput">Cor</label>
+              <div class="chColors">
+                <input type="color" id="chColorInput" value="#ffffff" />
+                <button type="button" class="chSwatch" data-color="#ffffff" style="background:#ffffff"></button>
+                <button type="button" class="chSwatch" data-color="#22ff66" style="background:#22ff66"></button>
+                <button type="button" class="chSwatch" data-color="#00e5ff" style="background:#00e5ff"></button>
+                <button type="button" class="chSwatch" data-color="#ffe23d" style="background:#ffe23d"></button>
+                <button type="button" class="chSwatch" data-color="#ff3df5" style="background:#ff3df5"></button>
+              </div>
+            </div>
+            <div class="settingRow">
+              <label for="chSizeRange">Tamanho</label>
+              <div class="rangeWrap">
+                <input type="range" id="chSizeRange" min="0.5" max="2" step="0.05" value="1" />
+                <input type="number" id="chSizeNum" min="0.5" max="2" step="0.05" value="1" />
+              </div>
+            </div>
+            <div class="settingRow">
+              <label for="chThickRange">Espessura</label>
+              <div class="rangeWrap">
+                <input type="range" id="chThickRange" min="1" max="4" step="1" value="2" />
+                <input type="number" id="chThickNum" min="1" max="4" step="1" value="2" />
+              </div>
+            </div>
+            <label class="checkboxLabel"><input type="checkbox" id="chDynamicCheck" checked /><span>Abrir com a dispersão (andar/pular/atirar)</span></label>
+            <label class="checkboxLabel"><input type="checkbox" id="chOutlineCheck" checked /><span>Contorno escuro</span></label>
+          </div>
+          <div class="crosshairPreview" id="crosshairPreview">
+            <div id="crosshairPreviewInner" class="crosshairShape">
+              <i class="chLine top"></i><i class="chLine bottom"></i><i class="chLine left"></i><i class="chLine right"></i><i class="chDot"></i><i class="chCircle"></i>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div id="tabKeysContent" class="tabContent hidden">
@@ -268,13 +318,13 @@
 <script src="/socket.io/socket.io.min.js"></script>
 <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
 <!-- O parâmetro de versão impede que o navegador mantenha uma versão antiga do jogo em cache. -->
-<script src="constants.js?v=14"></script>
-<script src="maps.js?v=14"></script>
-<script src="textures.js?v=14"></script>
-<script src="weapons.js?v=14"></script>
-<script src="audio.js?v=14"></script>
-<script src="effects.js?v=14"></script>
-<script src="ui.js?v=14"></script>
-<script src="game.js?v=14"></script>
+<script src="constants.js?v=15"></script>
+<script src="maps.js?v=15"></script>
+<script src="textures.js?v=15"></script>
+<script src="weapons.js?v=15"></script>
+<script src="audio.js?v=15"></script>
+<script src="effects.js?v=15"></script>
+<script src="ui.js?v=15"></script>
+<script src="game.js?v=15"></script>
 </body>
 </html>

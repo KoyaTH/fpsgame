@@ -149,11 +149,39 @@ function renderSpeed(speed) {
   $('speedLines').style.opacity = Math.max(0, Math.min((speed - 10) / 10, 0.7));
 }
 
-// Mira dinâmica: o tamanho acompanha a dispersão atual
-function renderCrosshair(spreadPx, hidden) {
+// Aparência fixa da mira (estilo, cor, tamanho, espessura, contorno)
+function applyCrosshairSettings(el, cfg) {
+  el.dataset.style = cfg.style;
+  el.style.setProperty('--color', cfg.color);
+  el.style.setProperty('--len', `${Math.round(9 * cfg.size)}px`);
+  el.style.setProperty('--thick', `${cfg.thickness}px`);
+  el.classList.toggle('noOutline', !cfg.outline);
+}
+
+// Atualizada todo frame; só mexe no estilo quando algo muda
+const crosshairState = {};
+function setCrosshairVar(el, name, value) {
+  if (crosshairState[name] === value) return;
+  crosshairState[name] = value;
+  el.style.setProperty(name, value);
+}
+function setCrosshairClass(el, name, on) {
+  if (crosshairState[name] === on) return;
+  crosshairState[name] = on;
+  el.classList.toggle(name, on);
+}
+
+// spreadPx: raio da dispersão atual em pixels na tela
+function renderCrosshair({ spreadPx, hidden, adsHidden, spreadCircle, cfg }) {
   const ch = $('crosshair');
-  ch.style.setProperty('--gap', `${Math.round(4 + spreadPx)}px`);
-  ch.classList.toggle('hidden', hidden);
+  const open = cfg.dynamic ? spreadPx : 0;
+  setCrosshairVar(ch, '--gap', `${Math.round(4 * cfg.size + open)}px`);
+  // Escopeta: círculo do tamanho real do cone; estilo círculo: acompanha a abertura
+  const circle = spreadCircle ? Math.max(spreadPx, 6) : 7 * cfg.size + open;
+  setCrosshairVar(ch, '--circle', `${Math.round(circle)}px`);
+  setCrosshairClass(ch, 'hidden', hidden);
+  setCrosshairClass(ch, 'adsHidden', adsHidden);
+  setCrosshairClass(ch, 'spreadCircle', spreadCircle);
 }
 
 // -----------------------------------------------------------------------------

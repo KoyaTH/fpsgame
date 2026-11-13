@@ -18,6 +18,10 @@ function weaponMaterials(key) {
   };
 }
 
+// Pontinho da massa de mira: cor fixa e sem iluminação (sempre visível)
+const SIGHT_DOT_MAT = new THREE.MeshBasicMaterial({ color: 0xa3ff4f });
+const RED_DOT_GLASS = new THREE.MeshBasicMaterial({ color: 0xbfe8ff, transparent: true, opacity: 0.12, depthWrite: false });
+
 function buildWeaponModel(key) {
   const group = new THREE.Group();
   const m = weaponMaterials(key);
@@ -36,8 +40,40 @@ function buildWeaponModel(key) {
     return mesh;
   };
 
+  // Alça e massa de mira: entalhe traseiro (dois postes) + poste frontal.
+  // O topo dos postes fica exatamente na altura da linha de visada (eyeY).
+  const ironSights = (rearZ, frontZ, eyeY, baseY, frontMat = m.accent) => {
+    const rearH = eyeY - baseY + 0.012;
+    box(0.016, rearH, 0.02, m.dark, -0.022, baseY + rearH / 2, rearZ);
+    box(0.016, rearH, 0.02, m.dark, 0.022, baseY + rearH / 2, rearZ);
+    const frontH = eyeY - baseY;
+    box(0.012, frontH, 0.018, frontMat, 0, baseY + frontH / 2, frontZ);
+    // pontinho brilhante no topo da massa (fácil de ver contra o fundo)
+    box(0.012, 0.01, 0.01, SIGHT_DOT_MAT, 0, eyeY - 0.005, frontZ - 0.006);
+  };
+
+  // Red dot: base, moldura retangular, vidro e retícula acesa no centro
+  const redDot = (z, eyeY, baseY, reticleColor = 0xff2a2a) => {
+    const winH = 0.07; const winW = 0.075;
+    box(0.06, eyeY - winH / 2 - baseY, 0.1, m.dark, 0, (baseY + eyeY - winH / 2) / 2, z + 0.02);
+    box(0.012, winH, 0.03, m.dark, -winW / 2, eyeY, z);
+    box(0.012, winH, 0.03, m.dark, winW / 2, eyeY, z);
+    box(winW + 0.012, 0.012, 0.03, m.dark, 0, eyeY + winH / 2, z);
+    box(winW, 0.008, 0.03, m.dark, 0, eyeY - winH / 2, z);
+    // vidro quase transparente: dá para ver o alvo através dele
+    box(winW, winH, 0.002, RED_DOT_GLASS, 0, eyeY, z - 0.012);
+    const dot = new THREE.Mesh(
+      new THREE.CircleGeometry(0.0065, 16),
+      new THREE.MeshBasicMaterial({ color: reticleColor, depthTest: false, transparent: true }),
+    );
+    dot.position.set(0, eyeY, z - 0.014);
+    dot.renderOrder = 20;
+    group.add(dot);
+  };
+
   let muzzleZ = -0.6;
   let support = new THREE.Vector3(0, -0.06, -0.38); // posição da mão de apoio
+  let sightY = null; // altura da linha de visada (null = arma sem mira)
 
   switch (key) {
     case 'smg':
@@ -45,12 +81,12 @@ function buildWeaponModel(key) {
       box(0.08, 0.2, 0.1, m.dark, 0, -0.14, -0.02, -0.25);
       box(0.07, 0.24, 0.09, m.dark, 0, -0.17, -0.22, 0.12);
       box(0.08, 0.035, 0.34, m.accent, 0, 0.085, -0.18);
-      box(0.05, 0.06, 0.05, m.dark, 0, 0.12, -0.04);
+      redDot(-0.12, 0.15, 0.1025);
       cyl(0.032, 0.22, m.steel, 0, 0.01, -0.48);
       cyl(0.045, 0.16, m.dark, 0, 0.01, -0.62);
       box(0.05, 0.05, 0.22, m.dark, 0, -0.02, 0.15);
       box(0.06, 0.12, 0.04, m.dark, 0, -0.05, 0.26);
-      muzzleZ = -0.71; support.set(0, -0.08, -0.36);
+      muzzleZ = -0.71; support.set(0, -0.08, -0.36); sightY = 0.15;
       break;
     case 'rifle':
       box(0.11, 0.15, 0.5, m.body, 0, 0, -0.1);
@@ -63,9 +99,8 @@ function buildWeaponModel(key) {
       box(0.1, 0.18, 0.06, m.body, 0, -0.04, 0.41);
       cyl(0.026, 0.3, m.steel, 0, 0.0, -0.8);
       box(0.06, 0.04, 0.08, m.dark, 0, 0.0, -0.96);
-      box(0.08, 0.07, 0.12, m.dark, 0, 0.12, -0.12);
-      box(0.06, 0.05, 0.01, m.glass, 0, 0.13, -0.18);
-      muzzleZ = -1.0; support.set(0, -0.07, -0.5);
+      redDot(-0.1, 0.155, 0.075, 0x2bff88);
+      muzzleZ = -1.0; support.set(0, -0.07, -0.5); sightY = 0.155;
       break;
     case 'sniper':
       box(0.12, 0.14, 0.8, m.body, 0, 0, -0.3);
@@ -81,17 +116,16 @@ function buildWeaponModel(key) {
       cyl(0.06, 0.08, m.dark, 0, 0.16, 0.02, 16);
       box(0.1, 0.1, 0.01, m.glass, 0, 0.16, -0.575);
       box(0.03, 0.03, 0.12, m.steel, 0.08, 0.04, -0.02, 0, 0, 0.3);
-      muzzleZ = -1.68; support.set(0, -0.08, -0.6);
+      muzzleZ = -1.68; support.set(0, -0.08, -0.6); sightY = 0.16;
       break;
     case 'pistol':
       box(0.08, 0.09, 0.32, m.dark, 0, 0.02, -0.12);
       box(0.075, 0.06, 0.28, m.body, 0, -0.045, -0.1);
       box(0.07, 0.2, 0.1, m.body, 0, -0.15, 0.0, -0.2);
       box(0.02, 0.06, 0.06, m.dark, 0, -0.1, -0.1);
-      box(0.015, 0.03, 0.02, m.accent, 0, 0.08, -0.26);
-      box(0.04, 0.03, 0.02, m.accent, 0, 0.08, 0.02);
+      ironSights(0.02, -0.25, 0.092, 0.065);
       cyl(0.02, 0.04, m.steel, 0, 0.02, -0.3);
-      muzzleZ = -0.32; support.set(0, -0.16, -0.02);
+      muzzleZ = -0.32; support.set(0, -0.16, -0.02); sightY = 0.092;
       break;
     case 'revolver':
       cyl(0.03, 0.38, m.steel, 0, 0.04, -0.32);
@@ -100,9 +134,9 @@ function buildWeaponModel(key) {
       box(0.08, 0.12, 0.18, m.body, 0, 0.0, 0.02);
       box(0.07, 0.22, 0.1, m.wood, 0, -0.15, 0.11, -0.35);
       box(0.02, 0.05, 0.04, m.dark, 0, 0.09, 0.1, 0.5);
-      box(0.015, 0.035, 0.02, m.accent, 0, 0.11, -0.48);
+      ironSights(-0.15, -0.47, 0.118, 0.095);
       box(0.02, 0.05, 0.06, m.dark, 0, -0.08, -0.02);
-      muzzleZ = -0.52; support.set(0, -0.17, 0.08);
+      muzzleZ = -0.52; support.set(0, -0.17, 0.08); sightY = 0.118;
       break;
     case 'shotgun':
       box(0.12, 0.15, 0.34, m.body, 0, 0, -0.06);
@@ -112,8 +146,8 @@ function buildWeaponModel(key) {
       box(0.08, 0.2, 0.1, m.dark, 0, -0.14, 0.06, -0.3);
       box(0.1, 0.16, 0.36, m.wood, 0, -0.04, 0.3);
       box(0.11, 0.2, 0.05, m.dark, 0, -0.05, 0.5);
-      box(0.02, 0.03, 0.02, m.accent, 0, 0.08, -1.0);
-      muzzleZ = -1.03; support.set(0, -0.09, -0.52);
+      ironSights(-0.1, -0.98, 0.098, 0.07);
+      muzzleZ = -1.03; support.set(0, -0.09, -0.52); sightY = 0.098;
       break;
     case 'grapple': {
       box(0.18, 0.18, 0.4, m.body, 0, 0, -0.12);
@@ -139,7 +173,15 @@ function buildWeaponModel(key) {
       break;
   }
 
-  return { group, muzzle: new THREE.Vector3(0, 0.02, muzzleZ), support };
+  // Quanto a arma se estende para trás da empunhadura (para não entrar na câmera ao mirar)
+  const bbox = new THREE.Box3().setFromObject(group);
+  return {
+    group,
+    muzzle: new THREE.Vector3(0, 0.02, muzzleZ),
+    support,
+    sight: sightY === null ? null : new THREE.Vector3(0, sightY, 0),
+    rearZ: bbox.max.z,
+  };
 }
 
 // -----------------------------------------------------------------------------

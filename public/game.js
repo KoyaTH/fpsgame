@@ -52,6 +52,14 @@ const DEFAULT_SETTINGS = {
   invertY: false,
   fov: 90,
   shadows: true,
+  crosshair: {
+    style: 'cruzPonto', // cruz | cruzPonto | ponto | circulo | t
+    color: '#ffffff',
+    size: 1,
+    thickness: 2,
+    dynamic: true,      // abre com a dispersão
+    outline: true,
+  },
   keybinds: {
     forward: 'KeyW',
     back: 'KeyS',
@@ -83,6 +91,7 @@ function loadSavedSettings() {
         ...DEFAULT_SETTINGS,
         ...parsed,
         keybinds: { ...DEFAULT_SETTINGS.keybinds, ...(parsed.keybinds || {}) },
+        crosshair: { ...DEFAULT_SETTINGS.crosshair, ...(parsed.crosshair || {}) },
       };
     }
   } catch (e) { /* armazenamento indisponível */ }
@@ -145,6 +154,32 @@ function initSettingsUI() {
   setupRangePair('fovRange', 'fovNum', 'fov');
 
   $('invertYCheck').addEventListener('change', (e) => { userSettings.invertY = e.target.checked; });
+  // Editor da mira (crosshair): cada mudança aplica na hora, com prévia
+  const ch = () => userSettings.crosshair;
+  const chPair = (rangeId, numId, key, parse) => {
+    const range = $(rangeId);
+    const num = $(numId);
+    const apply = (raw) => {
+      const v = parse(raw);
+      if (Number.isNaN(v)) return;
+      ch()[key] = v;
+      range.value = v;
+      num.value = v;
+      refreshCrosshairLook();
+    };
+    range.addEventListener('input', () => apply(range.value));
+    num.addEventListener('input', () => apply(num.value));
+  };
+  chPair('chSizeRange', 'chSizeNum', 'size', parseFloat);
+  chPair('chThickRange', 'chThickNum', 'thickness', (v) => parseInt(v, 10));
+  $('chStyleSelect').addEventListener('change', (e) => { ch().style = e.target.value; refreshCrosshairLook(); });
+  $('chColorInput').addEventListener('input', (e) => { ch().color = e.target.value; refreshCrosshairLook(); });
+  document.querySelectorAll('.chSwatch').forEach((btn) => {
+    btn.addEventListener('click', () => { ch().color = btn.dataset.color; refreshCrosshairLook(); });
+  });
+  $('chDynamicCheck').addEventListener('change', (e) => { ch().dynamic = e.target.checked; });
+  $('chOutlineCheck').addEventListener('change', (e) => { ch().outline = e.target.checked; refreshCrosshairLook(); });
+
   $('shadowsCheck').addEventListener('change', (e) => {
     userSettings.shadows = e.target.checked;
     applyShadowSetting();
@@ -197,10 +232,29 @@ function syncSettingsToUI() {
   setPair('fovRange', 'fovNum', userSettings.fov);
   $('invertYCheck').checked = !!userSettings.invertY;
   $('shadowsCheck').checked = !!userSettings.shadows;
+  const c = userSettings.crosshair;
+  $('chStyleSelect').value = c.style;
+  $('chSizeRange').value = c.size; $('chSizeNum').value = c.size;
+  $('chThickRange').value = c.thickness; $('chThickNum').value = c.thickness;
+  $('chDynamicCheck').checked = !!c.dynamic;
+  $('chOutlineCheck').checked = !!c.outline;
+  refreshCrosshairLook();
   document.querySelectorAll('.keybindBtn').forEach((btn) => {
     btn.classList.remove('listening');
     btn.textContent = formatKeyCode(userSettings.keybinds[btn.dataset.action]);
   });
+}
+
+// Aplica a aparência da mira no HUD e na prévia das configurações
+function refreshCrosshairLook() {
+  const c = userSettings.crosshair;
+  applyCrosshairSettings($('crosshair'), c);
+  const preview = $('crosshairPreviewInner');
+  applyCrosshairSettings(preview, c);
+  preview.style.setProperty('--gap', `${Math.round(4 * c.size + 2)}px`);
+  preview.style.setProperty('--circle', `${Math.round(7 * c.size + 2)}px`);
+  $('chColorInput').value = c.color;
+  document.querySelectorAll('.chSwatch').forEach((b) => b.classList.toggle('active', b.dataset.color === c.color));
 }
 
 function applyShadowSetting() {
@@ -459,6 +513,7 @@ const vm = {
   kick: 0,           // recuo visual (empurra para trás)
   kickRot: 0,
   ads: 0,            // 0 = quadril, 1 = mirando
+  adsPos: null,      // posição do holder que alinha a mira da arma atual
   drawT: 1,          // 0..1 animação de sacar a arma
   swingT: 1,         // 0..1 golpe de faca
   landDip: 0,
@@ -466,7 +521,9 @@ const vm = {
 };
 
 const VM_HIP = new THREE.Vector3(0.17, -0.17, -0.42);
-const VM_ADS = new THREE.Vector3(0, -0.064, -0.34);
+const VM_ADS = new THREE.Vector3(0, -0.064, -0.34); // reserva para armas sem mira
+const ADS_EYE_GAP = 0.09;  // folga mínima entre o olho e a traseira da arma ao mirar
+const ADS_MIN_DIST = 0.32; // empunhadura nunca mais perto que isso (alça não tampa a visão)
 const VM_SCALE = 0.62;
 
 function createViewModel() {
@@ -503,6 +560,10 @@ function updateWeaponModel() {
   }
   const key = myWeaponKey || 'smg';
   vm.weapon = buildWeaponModel(key);
+  // Posição de mira: a linha de visada da arma fica exatamente no centro da tela
+  vm.adsPos = vm.weapon.sight
+    ? new THREE.Vector3(0, -vm.weapon.sight.y * VM_SCALE, -Math.max(vm.weapon.rearZ * VM_SCALE + ADS_EYE_GAP, ADS_MIN_DIST))
+    : VM_ADS;
   vm.holder.add(vm.weapon.group);
   vm.holder.add(makeViewArm(new THREE.Vector3(0, -0.06, 0.02), 1));
   vm.holder.add(makeViewArm(vm.weapon.support, -1));
@@ -599,16 +660,18 @@ function updateViewModel(dt) {
     swingX = -s * 0.18;
   }
 
-  const base = VM_HIP.clone().lerp(VM_ADS, vm.ads);
+  const base = VM_HIP.clone().lerp(vm.adsPos || VM_ADS, vm.ads);
+  // Mirando, qualquer giro desalinha a mira: amortece balanço e inclinação
+  const steady = 1 - vm.ads * 0.9;
   vm.holder.position.set(
     base.x + bobX + vm.sway.x + swingX,
     base.y + bobY + vm.sway.y + idle + drawY + reloadY - vm.landDip + (crouchAmount * 0.02),
     base.z + vm.kick,
   );
   vm.holder.rotation.set(
-    vm.kickRot + reloadRotX + drawRot + vm.sway.y * 1.5,
-    vm.sway.x * 2 + swingRotY,
-    -bobX * 2 + reloadRotZ + vm.tilt * 0.6,
+    vm.kickRot * (1 - vm.ads * 0.6) + reloadRotX + drawRot + vm.sway.y * 1.5 * steady,
+    vm.sway.x * 2 * steady + swingRotY,
+    (-bobX * 2 + vm.tilt * 0.6) * steady + reloadRotZ,
   );
 
   // Gancho preso: aponta levemente para o ponto
@@ -1859,7 +1922,15 @@ function animate() {
   updateNameTags();
 
   // HUD em ritmo menor
-  renderCrosshair(currentSpread() * window.innerHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))), aimUi.scoped || !myAlive);
+  const heldWeapon = WEAPONS[myWeaponKey];
+  renderCrosshair({
+    spreadPx: currentSpread() * window.innerHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))),
+    hidden: aimUi.scoped || !myAlive,
+    // Mirando com alça/red dot a mira da arma substitui a da tela
+    adsHidden: vm.ads > 0.55 && !!(vm.weapon && vm.weapon.sight),
+    spreadCircle: !!heldWeapon && heldWeapon.pellets > 1,
+    cfg: userSettings.crosshair,
+  });
   if (++hudTick % 6 === 0) renderSpeed(myAlive ? Math.hypot(velocity.x, velocity.z) : 0);
 
   renderer.render(scene, camera);
