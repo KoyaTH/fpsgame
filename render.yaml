@@ -1,8 +1,16 @@
 services:
   - type: web
-    name: ffa-fps-krunker
+    name: fpsgame
     runtime: node
     plan: free
+    # Virginia (US East) é a região do Render mais perto do Brasil (menor ping)
+    region: virginia
     buildCommand: npm ci
     startCommand: npm start
     healthCheckPath: /health
+    envVars:
+      # Taxas de rede (10 a 60). Baixe para 30 se o plano gratuito engasgar.
+      - key: STATE_HZ
+        value: "60"
+      - key: MOVE_HZ
+        value: "60"
