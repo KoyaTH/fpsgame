@@ -39,13 +39,20 @@ https://ffa-fps-krunker.onrender.com/
 
 ## 🔫 Arsenal de Armas
 
-| Arma | Tipo | Dano (Corpo / Cabeça) | Cadência | Capacidade | Recarga |
+Escolha 2 armas no loadout (com prévia 3D de cada uma); a faca é sempre o slot 3.
+
+| Arma | Tipo | Dano (Corpo / Cabeça) | Cadência | Pente | Recarga |
 | :--- | :--- | :---: | :---: | :---: | :---: |
-| **Metralhadora (SMG)** | Automática | 18 / 36 | Rápida (110ms) | 30 balas | 2.0s |
-| **Sniper** | Tiro Único | 60 / 999 (Hit Kill) | Lenta (1100ms) | 3 balas | 2.6s |
-| **Pistolinha** | Semi-automática | 22 / 44 | Média (240ms) | 12 balas | 1.5s |
-| **Grappling Hook** | Utilitário | 0 / 0 | 550ms | Infinito | Instantâneo |
-| **Faca** | Melee | 40 / 80 | 450ms | Infinito | Instantâneo |
+| **Metralhadora (SMG)** | Automática | 18 / 36 | 110ms | 30 | 2.0s |
+| **Fuzil de Assalto** | Automática | 22 / 44 | 135ms | 26 | 2.2s |
+| **Sniper** | Precisão (mira telescópica) | 60 / 100 | 1100ms | 3 | 2.6s |
+| **Escopeta** | 8 chumbos, dano cai com a distância | 11 / 16 por chumbo | 800ms | 6 | 2.4s |
+| **Pistolinha** | Secundária | 22 / 44 | 240ms | 12 | 1.5s |
+| **Revólver** | Secundária pesada | 45 / 90 | 560ms | 6 | 2.1s |
+| **Gancho** | Utilitário com física de corda | — | 350ms | ∞ | — |
+| **Faca** | Corpo a corpo | 40 / 80 | 450ms | ∞ | — |
+
+A dispersão aumenta andando e pulando e diminui mirando ou agachado; cada arma tem recuo próprio.
 
 ---
 
@@ -53,15 +60,22 @@ https://ffa-fps-krunker.onrender.com/
 
 | Tecla / Ação | Função |
 | :--- | :--- |
-| **W, A, S, D** | Movimentação do personagem |
-| **Mouse** | Mirar (visão em primeira pessoa) |
-| **Botão Esquerdo do Mouse** | Atirar / Usar faca ou gancho |
-| **Espaço** | Pular / Bunny Hop |
-| **R** | Recarregar arma |
-| **1, 2, 3** | Trocar de arma (Arma 1, Arma 2, Faca) |
-| **G** | Usar Grappling Hook rapidamente |
-| **TAB (Segurar)** | Abrir placar de pontuação |
-| **ESC** | Liberar o cursor do mouse |
+| **W, A, S, D** | Mover |
+| **Espaço (segure)** | Pular / bunny hop automático |
+| **A/D + mouse no ar** | Air strafe (ganha velocidade no bhop) |
+| **Shift** | Agachar; correndo vira slide |
+| **Botão esquerdo** | Atirar / faca / disparar o gancho |
+| **Segurar clique (gancho)** | Fica preso e balança como pêndulo; soltar mantém o impulso |
+| **Espaço (no gancho)** | Solta o gancho com impulso para cima |
+| **Botão direito** | Mirar (ADS) |
+| **R** | Recarregar |
+| **1, 2, 3 / roda do mouse / Q** | Trocar arma (Q = última arma) |
+| **G** | Equipar o gancho |
+| **B** | Trocar o loadout durante a partida |
+| **P** | Reiniciar (renasce após o tempo de respawn) |
+| **TAB (segurar)** | Placar |
+
+Todas as teclas, sensibilidade, FOV e sombras podem ser alteradas em ⚙️ Configurações.
 
 ---
 
@@ -100,7 +114,12 @@ https://ffa-fps-krunker.onrender.com/
 ```
 fpsgame/
 ├── public/                 # Arquivos estáticos do cliente (sem bundler)
-│   ├── constants.js        # Definições de armas e configurações do cliente
+│   ├── constants.js        # Armas (atributos, dispersão, recuo) e informações dos mapas
+│   ├── weapons.js          # Modelos 3D das armas e prévias (fotos) de armas e mapas
+│   ├── textures.js         # Texturas procedurais e céu
+│   ├── effects.js          # Partículas, marcas de tiro, rastros, clarão e corpos
+│   ├── audio.js            # Sons sintetizados (Web Audio)
+│   ├── ui.js               # HUD, cartões de armas, votação, placar e telas
 │   ├── game.js             # Lógica do jogo (Three.js, inputs, HUD, Socket.IO)
 │   ├── maps.js             # Construção procedural da geometria dos mapas e colisões
 │   ├── index.html          # Interface, HUD e carregamento de scripts

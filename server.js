@@ -34,14 +34,21 @@ app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 // ---------------------------------------------------------------------------
 // CONFIGURAÇÃO DE ARMAS (precisa bater com public/constants.js)
 // ---------------------------------------------------------------------------
+// falloff: dano cai linearmente de 100% (start) até min% (end), em metros
 const WEAPONS = {
-  smg: { name: 'Metralhadora', maxAmmo: 30, dmgBody: 18, dmgHead: 36, fireRate: 110, reloadTime: 2000 },
-  sniper: { name: 'Sniper', maxAmmo: 3, dmgBody: 60, dmgHead: 100, fireRate: 1100, reloadTime: 2600 },
-  pistol: { name: 'Pistolinha', maxAmmo: 12, dmgBody: 22, dmgHead: 44, fireRate: 240, reloadTime: 1500 },
-  grapple: { name: 'Grappling Hook', maxAmmo: Infinity, dmgBody: 0, dmgHead: 0, fireRate: 550, reloadTime: 0, isUtility: true },
-  knife: { name: 'Faca', maxAmmo: Infinity, dmgBody: 40, dmgHead: 80, fireRate: 450, reloadTime: 0, isMelee: true },
+  smg: { name: 'Metralhadora', maxAmmo: 30, dmgBody: 18, dmgHead: 36, fireRate: 110, reloadTime: 2000, pellets: 1 },
+  rifle: { name: 'Fuzil de Assalto', maxAmmo: 26, dmgBody: 22, dmgHead: 44, fireRate: 135, reloadTime: 2200, pellets: 1 },
+  sniper: { name: 'Sniper', maxAmmo: 3, dmgBody: 60, dmgHead: 100, fireRate: 1100, reloadTime: 2600, pellets: 1 },
+  pistol: { name: 'Pistolinha', maxAmmo: 12, dmgBody: 22, dmgHead: 44, fireRate: 240, reloadTime: 1500, pellets: 1 },
+  revolver: { name: 'Revólver', maxAmmo: 6, dmgBody: 45, dmgHead: 90, fireRate: 560, reloadTime: 2100, pellets: 1 },
+  shotgun: {
+    name: 'Escopeta', maxAmmo: 6, dmgBody: 11, dmgHead: 16, fireRate: 800, reloadTime: 2400, pellets: 8,
+    falloff: { start: 8, end: 26, min: 0.35 },
+  },
+  grapple: { name: 'Gancho', maxAmmo: Infinity, dmgBody: 0, dmgHead: 0, fireRate: 350, reloadTime: 0, isUtility: true },
+  knife: { name: 'Faca', maxAmmo: Infinity, dmgBody: 40, dmgHead: 80, fireRate: 450, reloadTime: 0, isMelee: true, pellets: 1 },
 };
-const LOADOUT_CHOICES = ['smg', 'sniper', 'pistol', 'grapple'];
+const LOADOUT_CHOICES = ['smg', 'rifle', 'sniper', 'shotgun', 'pistol', 'revolver', 'grapple'];
 
 // Tolerância de cadência: pacotes chegam com jitter de rede, então dois tiros
 // enviados a 110ms podem chegar com 80ms de intervalo. Sem isso o servidor
@@ -189,7 +196,7 @@ function freshAmmo(loadout) {
 // Dados públicos do jogador (nunca enviar o objeto interno: ele guarda timers)
 function publicPlayer(p) {
   return {
-    id: p.id, name: p.name, x: p.x, y: p.y, z: p.z, rotY: p.rotY,
+    id: p.id, name: p.name, x: p.x, y: p.y, z: p.z, rotY: p.rotY, pitch: p.pitch, crouch: p.crouch,
     health: p.health, alive: p.alive, weaponKey: p.weaponKey,
     kills: p.kills, deaths: p.deaths,
   };
@@ -238,6 +245,9 @@ function spawnPlayer(p) {
   cancelReload(p);
   p.x = s.x; p.y = s.y; p.z = s.z;
   p.rotY = Math.atan2(s.x, s.z); // olha para o centro do mapa
+  p.pitch = 0;
+  p.crouch = 0;
+  p.grappling = false;
   p.health = 100;
   p.alive = true;
   p.weaponKey = p.loadout[0];
@@ -262,16 +272,27 @@ function respawnNow(p) {
   emitRespawned(p);
 }
 
-function killPlayer(victim, killer, weaponName, headshot, damage) {
+function releaseGrapple(p) {
+  if (!p.grappling) return;
+  p.grappling = false;
+  io.emit('grappleReleased', { id: p.id });
+}
+
+function killPlayer(victim, killer, weaponKey, headshot, damage) {
+  const weaponName = weaponKey ? WEAPONS[weaponKey].name : null;
   victim.alive = false;
   victim.health = 0;
   cancelReload(victim);
+  releaseGrapple(victim);
 
   const isReset = !killer;
   if (!isReset) {
     victim.deaths += 1;
     if (killer !== victim) killer.kills += 1;
-    io.emit('killFeed', { killerName: killer.name, victimName: victim.name, weapon: weaponName, headshot: !!headshot });
+    io.emit('killFeed', {
+      killerId: killer.id, killerName: killer.name, victimId: victim.id, victimName: victim.name,
+      weapon: weaponName, weaponKey, headshot: !!headshot,
+    });
     broadcastScoreboard();
   }
 
@@ -279,6 +300,9 @@ function killPlayer(victim, killer, weaponName, headshot, damage) {
     id: victim.id,
     killerId: killer ? killer.id : null,
     killerName: killer ? killer.name : 'Reset',
+    killerHealth: killer ? killer.health : null,
+    weapon: weaponName,
+    weaponKey,
     damage,
     headshot: !!headshot,
     attackerPos: killer ? { x: killer.x, y: killer.y, z: killer.z } : null,
@@ -320,10 +344,18 @@ function endMatch() {
   setTimeout(startVoting, END_SCREEN_DURATION * 1000);
 }
 
+function voteCounts() {
+  const counts = {};
+  game.voteOptions.forEach((id) => { counts[id] = 0; });
+  Object.values(game.votes).forEach((mapId) => { if (counts[mapId] !== undefined) counts[mapId] += 1; });
+  return counts;
+}
+
 function voteStartPayload() {
   return {
     options: game.voteOptions.map((id) => ({ id, name: MAPS[id].name })),
     duration: game.timeLeft,
+    counts: voteCounts(),
   };
 }
 
@@ -340,11 +372,7 @@ function startVoting() {
 }
 
 function tallyVotesAndStart() {
-  const tally = {};
-  game.voteOptions.forEach((id) => { tally[id] = 0; });
-  Object.values(game.votes).forEach((mapId) => {
-    if (tally[mapId] !== undefined) tally[mapId] += 1;
-  });
+  const tally = voteCounts();
   const best = Math.max(...Object.values(tally));
   const winners = game.voteOptions.filter((id) => tally[id] === best);
   startMatch(winners[Math.floor(Math.random() * winners.length)]);
@@ -377,13 +405,16 @@ setInterval(() => {
 }, 1000);
 
 // Snapshot compacto de posições (20Hz):
-// [id, x, y, z, rotY, alive(0/1), weaponKey, health]
+// [id, x, y, z, rotY, alive(0/1), weaponKey, health, pitch, crouch(0..1), grappling(0/1)]
 setInterval(() => {
   if (game.status !== 'playing') return;
   const list = [];
   for (const id in players) {
     const p = players[id];
-    list.push([id, round2(p.x), round2(p.y), round2(p.z), round2(p.rotY), p.alive ? 1 : 0, p.weaponKey, p.health]);
+    list.push([
+      id, round2(p.x), round2(p.y), round2(p.z), round2(p.rotY), p.alive ? 1 : 0, p.weaponKey, p.health,
+      round2(p.pitch || 0), round2(p.crouch || 0), p.grappling ? 1 : 0,
+    ]);
   }
   if (list.length > 0) io.volatile.emit('state', { t: Date.now(), p: list });
 }, STATE_RATE_MS);
@@ -431,6 +462,7 @@ io.on('connection', (socket) => {
       id: socket.id,
       players: others,
       seq: p.spawnSeq,
+      ammo: p.ammo, // munição é privada: só vai para o próprio jogador
       game: { status: game.status, currentMap: game.currentMap, mapName: MAPS[game.currentMap].name, timeLeft: game.timeLeft },
     });
     socket.broadcast.emit('playerJoined', publicPlayer(p));
@@ -451,6 +483,8 @@ io.on('connection', (socket) => {
     p.y = Math.max(0, Math.min(60, y));
     p.z = Math.max(-bounds, Math.min(bounds, z));
     p.rotY = rotY;
+    p.pitch = isFiniteNum(data.pitch) ? Math.max(-1.6, Math.min(1.6, data.pitch)) : 0;
+    p.crouch = isFiniteNum(data.crouch) ? Math.max(0, Math.min(1, data.crouch)) : 0;
   });
 
   socket.on('switchWeapon', (data) => {
@@ -458,7 +492,10 @@ io.on('connection', (socket) => {
     const p = players[socket.id];
     if (!p || !p.alive) return;
     if (key !== 'knife' && !p.loadout.includes(key)) return;
-    if (p.weaponKey !== key) cancelReload(p);
+    if (p.weaponKey !== key) {
+      cancelReload(p);
+      releaseGrapple(p);
+    }
     p.weaponKey = key;
   });
 
@@ -500,13 +537,20 @@ io.on('connection', (socket) => {
     const now = Date.now();
     if (now - (p.lastShotAt.grapple || 0) < WEAPONS.grapple.fireRate * FIRE_RATE_TOLERANCE) return;
     p.lastShotAt.grapple = now;
+    p.grappling = true;
     socket.broadcast.emit('grappleUsed', { id: socket.id, x: point.x, y: point.y, z: point.z });
   });
 
+  socket.on('grappleRelease', () => {
+    const p = players[socket.id];
+    if (p) releaseGrapple(p);
+  });
+
+  // Payload: { hits: [{ id, head }], ends: [{ x, y, z }] }
+  // Uma entrada em hits por projétil que acertou alguém (escopeta: até 8).
   socket.on('shoot', (data) => {
-    const { targetId, isHead, hitPos } = data || {};
     const shooter = players[socket.id];
-    if (!shooter || !shooter.alive || game.status !== 'playing') return;
+    if (!shooter || !shooter.alive || game.status !== 'playing' || !data) return;
 
     const key = shooter.weaponKey;
     const w = WEAPONS[key];
@@ -524,32 +568,48 @@ io.on('connection', (socket) => {
     }
     shooter.lastShotAt[key] = now;
 
-    const validHit = hitPos && [hitPos.x, hitPos.y, hitPos.z].every(isFiniteNum);
-    socket.broadcast.emit('playerShot', {
-      id: socket.id,
-      weaponKey: key,
-      hitPos: validHit ? { x: hitPos.x, y: hitPos.y, z: hitPos.z } : null,
-    });
+    const ends = (Array.isArray(data.ends) ? data.ends : [])
+      .slice(0, w.pellets)
+      .filter((e) => e && [e.x, e.y, e.z].every(isFiniteNum))
+      .map((e) => ({ x: round2(e.x), y: round2(e.y), z: round2(e.z) }));
+    socket.broadcast.emit('playerShot', { id: socket.id, weaponKey: key, ends });
 
-    const target = targetId ? players[targetId] : null;
-    if (!target || !target.alive || target === shooter) return;
-    if (w.isMelee && Math.hypot(target.x - shooter.x, target.z - shooter.z) > MELEE_MAX_RANGE) return;
+    // Soma o dano de todos os projéteis por alvo
+    const damageByTarget = new Map();
+    const hits = Array.isArray(data.hits) ? data.hits.slice(0, w.pellets) : [];
+    for (const hit of hits) {
+      const target = hit && players[hit.id];
+      if (!target || !target.alive || target === shooter) continue;
+      const dist = Math.hypot(target.x - shooter.x, target.y - shooter.y, target.z - shooter.z);
+      if (w.isMelee && dist > MELEE_MAX_RANGE) continue;
+      let dmg = hit.head ? w.dmgHead : w.dmgBody;
+      if (w.falloff) {
+        const { start, end, min } = w.falloff;
+        const t = Math.max(0, Math.min(1, (dist - start) / (end - start)));
+        dmg *= 1 - t * (1 - min);
+      }
+      const entry = damageByTarget.get(target) || { dmg: 0, head: false };
+      entry.dmg += dmg;
+      entry.head = entry.head || !!hit.head;
+      damageByTarget.set(target, entry);
+    }
 
-    const dmg = isHead ? w.dmgHead : w.dmgBody;
-    target.health = Math.max(target.health - dmg, 0);
-    target.lastDamageTime = now;
-
-    if (target.health <= 0) {
-      killPlayer(target, shooter, w.name, isHead, dmg);
-    } else {
-      io.emit('playerDamaged', {
-        id: target.id,
-        health: target.health,
-        attackerId: socket.id,
-        damage: dmg,
-        headshot: !!isHead,
-        attackerPos: { x: shooter.x, y: shooter.y, z: shooter.z },
-      });
+    for (const [target, { dmg: rawDmg, head }] of damageByTarget) {
+      const dmg = Math.max(1, Math.round(rawDmg));
+      target.health = Math.max(target.health - dmg, 0);
+      target.lastDamageTime = now;
+      if (target.health <= 0) {
+        killPlayer(target, shooter, key, head, dmg);
+      } else {
+        io.emit('playerDamaged', {
+          id: target.id,
+          health: target.health,
+          attackerId: socket.id,
+          damage: dmg,
+          headshot: head,
+          attackerPos: { x: shooter.x, y: shooter.y, z: shooter.z },
+        });
+      }
     }
   });
 
@@ -572,6 +632,7 @@ io.on('connection', (socket) => {
     if (game.status !== 'voting') return;
     if (!game.voteOptions.includes(mapId)) return;
     game.votes[socket.id] = mapId;
+    io.emit('voteUpdate', { counts: voteCounts() });
   });
 
   socket.on('disconnect', () => {

@@ -8,10 +8,20 @@ players, spawning, damage, and voting. Client files are deliberately plain
 JavaScript (no bundler):
 
 - `public/index.html` loads the UI and external browser libraries.
-- `public/game.js` handles Three.js rendering, input, HUD, and socket events.
-- `public/constants.js` defines client weapon metadata and selectable loadouts.
+- `public/constants.js` defines client weapon metadata (spread, recoil, stats),
+  selectable loadouts (`WEAPON_CHOICES`) and `MAP_INFO`.
 - `public/maps.js` builds client map geometry and collision obstacles.
+- `public/textures.js` procedural canvas textures (`userData.surface`) and sky.
+- `public/weapons.js` 3D weapon models plus rendered preview images of weapons
+  and maps (loadout cards, hotbar, killfeed, vote screen).
+- `public/audio.js` synthesized sounds; `public/effects.js` pooled particles,
+  decals, tracers, muzzle flashes and corpses.
+- `public/ui.js` DOM-only HUD/menus; `public/game.js` rendering, movement
+  (bhop/slide/crouch), grapple rope physics, shooting and socket events.
 - `public/style.css` contains all visual styling.
+
+Scripts are classic (not modules) and share one global scope, loaded in the
+order listed in `index.html`: never declare the same top-level name twice.
 
 Keep shared gameplay values aligned between `server.js` and the corresponding
 client files. For example, a weapon added to `WEAPONS` must be valid on both
@@ -22,9 +32,12 @@ server and client, and a map ID needs server spawn data plus a client builder.
 The following data must stay in sync between `server.js` and the client:
 
 - **Weapons** (`WEAPONS`): server holds authoritative damage/ammo/fireRate;
-  `public/constants.js` holds visual metadata (colors, barrelLength). Adding a
-  weapon requires updating both files plus `WEAPON_CHOICES` in
-  `public/constants.js` and the loadout picker in `public/index.html`.
+  `public/constants.js` repeats ammo/fireRate/reload/pellets and adds feel
+  (spread, recoil, ADS FOV, moveSpeed, stats). Adding a weapon requires both
+  files, `LOADOUT_CHOICES` (server) / `WEAPON_CHOICES` (client), a model case in
+  `buildWeaponModel` and a sound profile in `SHOT_PROFILES`.
+- **Shots**: `shoot` sends `{ hits: [{ id, head }], ends: [{ x, y, z }] }`,
+  one entry per pellet (max `pellets`); the server sums damage per target.
 - **Maps** (`MAPS`): `server.js` defines spawn points; `public/maps.js` builds
   the geometry and collision obstacles. A new map needs server spawn data plus
   a client builder function. The server loads `public/maps.js` directly at
