@@ -408,3 +408,23 @@ function renderCharacterOptions(container, character, onChange) {
     section(key).appendChild(row);
   }
 }
+
+// -----------------------------------------------------------------------------
+// MENSAGENS DO SISTEMA (jogador entrou / saiu)
+// -----------------------------------------------------------------------------
+const SYSTEM_FEED_MAX = 5;
+function showSystemMessage(text, kind = 'info') {
+  const feed = $('systemFeed');
+  if (!feed) return;
+  const el = document.createElement('div');
+  el.className = `sysMsg ${kind}`;
+  const icon = document.createElement('i');
+  icon.textContent = kind === 'join' ? '+' : kind === 'leave' ? '−' : '•';
+  const span = document.createElement('span');
+  span.textContent = text;
+  el.append(icon, span);
+  feed.appendChild(el);
+  while (feed.children.length > SYSTEM_FEED_MAX) feed.firstChild.remove();
+  setTimeout(() => el.classList.add('fade'), 5000);
+  setTimeout(() => el.remove(), 5700);
+}

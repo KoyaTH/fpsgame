@@ -10,7 +10,7 @@ https://fpsgame-9dju.onrender.com/
 - **Backend:** Node.js, Express, Socket.IO (WebSockets + Polling)
 - **Frontend:** HTML5, CSS3, JavaScript puro (Vanilla JS)
 - **Renderização 3D:** Three.js (WebGL com iluminação, modelos, colisões AABB e névoa)
-- **Controles:** Pointer Lock API (mira no mouse e movimentação em 1ª pessoa)
+- **Controles:** Pointer Lock API no PC (mira no mouse) e controles de toque no celular
 
 ---
 
@@ -33,6 +33,9 @@ https://fpsgame-9dju.onrender.com/
   - Partidas com temporizador (5 minutos).
   - *Killfeed* e Placar de líderes em tempo real (tecla `TAB`).
   - Tela de fim de partida e votação comunitária para o próximo mapa.
+- **Personagem customizável:** cores, cabeça, rosto e costas, com prévia 3D; braços seguram a arma por IK.
+- **Celular:** joystick, arrastar para mirar e botões de ação (tela cheia na horizontal).
+- **Avisos na tela:** mensagem quando um jogador entra ou sai da partida.
 - **Convite Local / LAN:** Exibição do endereço IP local e botão para copiar link para jogar com amigos na mesma rede.
 
 ---
@@ -75,7 +78,21 @@ A dispersão aumenta andando e pulando e diminui mirando ou agachado; cada arma 
 | **P** | Reiniciar (renasce após o tempo de respawn) |
 | **TAB (segurar)** | Placar |
 
-Todas as teclas, sensibilidade, FOV e sombras podem ser alteradas em ⚙️ Configurações.
+Todas as teclas, sensibilidade, FOV e gráficos podem ser alterados em ⚙️ Configurações.
+
+### 📱 No celular
+
+| Toque | Função |
+| :--- | :--- |
+| **Lado esquerdo (arrastar)** | Joystick de movimento (aparece onde o dedo encosta) |
+| **Lado direito (arrastar)** | Mirar / girar a câmera |
+| **Botão vermelho** | Atirar (segure para automáticas; arrastar o dedo também mira) |
+| **↑ / ↓** | Pular (segure para bhop) / agachar e slide |
+| **Botões menores** | Mirar (liga/desliga), recarregar e trocar arma |
+| **Barra de armas no topo** | Toque para escolher a arma |
+| **📋** | Placar |
+
+Os controles de toque ligam sozinhos em celulares e tablets (dá para forçar em ⚙️ Configurações → Mouse e mira → Celular). Jogue com o celular deitado; no primeiro acesso o jogo começa no preset de gráficos **Baixo**.
 
 ---
 
@@ -115,12 +132,15 @@ Todas as teclas, sensibilidade, FOV e sombras podem ser alteradas em ⚙️ Conf
 fpsgame/
 ├── public/                 # Arquivos estáticos do cliente (sem bundler)
 │   ├── constants.js        # Armas (atributos, dispersão, recuo) e informações dos mapas
+│   ├── characterOptions.js # Opções de customização (compartilhado com o servidor)
 │   ├── weapons.js          # Modelos 3D das armas e prévias (fotos) de armas e mapas
+│   ├── character.js        # Modelo dos jogadores, IK dos braços, animações e prévia 3D
 │   ├── textures.js         # Texturas procedurais e céu
 │   ├── effects.js          # Partículas, marcas de tiro, rastros, clarão e corpos
 │   ├── audio.js            # Sons sintetizados (Web Audio)
 │   ├── ui.js               # HUD, cartões de armas, votação, placar e telas
 │   ├── game.js             # Lógica do jogo (Three.js, inputs, HUD, Socket.IO)
+│   ├── touch.js            # Controles de toque para celular
 │   ├── maps.js             # Construção procedural da geometria dos mapas e colisões
 │   ├── index.html          # Interface, HUD e carregamento de scripts
 │   └── style.css           # Estilos visuais da interface, overlays e HUD

@@ -23,6 +23,12 @@ JavaScript (no bundler):
   decals, tracers, muzzle flashes and corpses.
 - `public/ui.js` DOM-only HUD/menus; `public/game.js` rendering, movement
   (bhop/slide/crouch), grapple rope physics, shooting and socket events.
+- `public/touch.js` (loaded last) mobile controls: dynamic joystick writing
+  `touchInput`, drag-to-look, action buttons. In touch mode (`isTouchMode()`,
+  setting `touchControls`) `controls.lock()` is a virtual lock
+  (`setLockState`) instead of Pointer Lock; mouse handlers ignore input
+  without a real `document.pointerLockElement`. Touch HUD layout lives under
+  `body.touchMode` in `style.css`.
 - `public/style.css` contains all visual styling.
 
 Scripts are classic (not modules) and share one global scope, loaded in the

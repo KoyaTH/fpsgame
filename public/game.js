@@ -51,6 +51,8 @@ const DEFAULT_SETTINGS = {
   sensAimX: 0.75,
   sensAimY: 0.75,
   invertY: false,
+  touchSens: 1.0,          // sensibilidade de arrastar para mirar (celular)
+  touchControls: 'auto',   // auto | on | off
   fov: 90,
   graphics: {
     preset: 'alto',     // baixo | medio | alto | ultra | personalizado
@@ -110,8 +112,30 @@ function loadSavedSettings() {
         userSettings.graphics.preset = 'personalizado';
       }
       delete userSettings.shadows;
+    } else if (isTouchDevice()) {
+      // Primeira vez no celular: começa no preset leve
+      Object.assign(userSettings.graphics, GFX_PRESETS.baixo, { preset: 'baixo' });
     }
   } catch (e) { /* armazenamento indisponível */ }
+}
+
+// Aparelho com tela de toque como entrada principal (celular/tablet)
+function isTouchDevice() {
+  const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  const fine = window.matchMedia && window.matchMedia('(any-pointer: fine)').matches;
+  return !!coarse || (navigator.maxTouchPoints > 0 && !fine);
+}
+
+// Controles de toque ativos (configuração: automático / ligado / desligado)
+function isTouchMode() {
+  const mode = userSettings.touchControls;
+  if (mode === 'on') return true;
+  if (mode === 'off') return false;
+  return isTouchDevice();
+}
+
+function applyTouchModeClass() {
+  document.body.classList.toggle('touchMode', isTouchMode());
 }
 
 function saveSettings() {
@@ -168,6 +192,12 @@ function initSettingsUI() {
   setupRangePair('sensAimXRange', 'sensAimXNum', 'sensAimX');
   setupRangePair('sensAimYRange', 'sensAimYNum', 'sensAimY');
   setupRangePair('fovRange', 'fovNum', 'fov');
+  setupRangePair('touchSensRange', 'touchSensNum', 'touchSens');
+  $('touchModeSelect').addEventListener('change', (e) => {
+    userSettings.touchControls = e.target.value;
+    if (!isTouchMode() && controls.isLocked && !document.pointerLockElement) controls.unlock();
+    applyTouchModeClass();
+  });
 
   $('invertYCheck').addEventListener('change', (e) => { userSettings.invertY = e.target.checked; });
   // Editor da mira (crosshair): cada mudança aplica na hora, com prévia
@@ -198,6 +228,7 @@ function initSettingsUI() {
 
   initGraphicsSettingsUI();
   applyGraphicsSettings();
+  applyTouchModeClass();
 
   document.querySelectorAll('.keybindBtn').forEach((btn) => {
     btn.addEventListener('click', (e) => {
@@ -223,6 +254,7 @@ function initSettingsUI() {
     saveSettings();
     syncSettingsToUI();
     applyGraphicsSettings();
+    applyTouchModeClass();
   });
 }
 
@@ -244,6 +276,8 @@ function syncSettingsToUI() {
   setPair('sensAimXRange', 'sensAimXNum', userSettings.sensAimX);
   setPair('sensAimYRange', 'sensAimYNum', userSettings.sensAimY);
   setPair('fovRange', 'fovNum', userSettings.fov);
+  setPair('touchSensRange', 'touchSensNum', userSettings.touchSens);
+  $('touchModeSelect').value = userSettings.touchControls;
   $('invertYCheck').checked = !!userSettings.invertY;
   syncGraphicsUI();
   const c = userSettings.crosshair;
@@ -443,6 +477,11 @@ initSettingsUI();
 const controls = {
   isLocked: false,
   lock() {
+    // Celular: não existe pointer lock; os controles de toque ficam ativos
+    if (isTouchMode()) {
+      if (!this.isLocked) setLockState(true);
+      return;
+    }
     const el = renderer ? renderer.domElement : document.body;
     if (!el.requestPointerLock) return;
     // Navegadores recusam o lock sem gesto do usuário (ex.: no respawn automático);
@@ -452,22 +491,44 @@ const controls = {
   },
   unlock() {
     if (document.pointerLockElement) document.exitPointerLock();
+    else if (this.isLocked) setLockState(false);
   },
 };
 
-document.addEventListener('pointerlockchange', () => {
-  controls.isLocked = !!document.pointerLockElement;
-  if (!controls.isLocked) {
+function setLockState(locked) {
+  controls.isLocked = locked;
+  document.body.classList.toggle('controlsActive', locked);
+  if (!locked) {
     aimHeld = false;
     mouseHeld = false;
+    resetTouchInput();
     releaseGrapple(false);
   }
-});
+}
+
+document.addEventListener('pointerlockchange', () => setLockState(!!document.pointerLockElement));
+
+// Tela cheia + paisagem no celular (precisa de um toque do jogador)
+function enterMobileFullscreen() {
+  if (!isTouchMode()) return;
+  try {
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req && !document.fullscreenElement && !document.webkitFullscreenElement) {
+      const result = req.call(el, { navigationUI: 'hide' });
+      const lockLandscape = () => {
+        if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
+      };
+      if (result && result.then) result.then(lockLandscape).catch(() => {});
+      else lockLandscape();
+    }
+  } catch (e) { /* navegador sem tela cheia (ex.: iPhone) */ }
+}
 
 const mouseDelta = { x: 0, y: 0 }; // acumulado por frame, usado no balanço da arma
 
 document.addEventListener('mousemove', (e) => {
-  if (!controls.isLocked) return;
+  if (!controls.isLocked || !document.pointerLockElement) return;
   const aiming = isAiming();
   const multX = (aiming ? userSettings.sensAimX : userSettings.sensX) * 0.0022;
   const multY = (aiming ? userSettings.sensAimY : userSettings.sensY) * 0.0022 * (userSettings.invertY ? -1 : 1);
@@ -610,6 +671,7 @@ $('randomCharacterBtn').addEventListener('click', () => {
 });
 
 $('joinBtn').addEventListener('click', () => {
+  enterMobileFullscreen();
   myLoadout = lobbyPicker.get();
   myName = $('nameInput').value.trim() || 'Jogador';
   initThree();
@@ -1427,15 +1489,24 @@ function connectSocket() {
       updateWeaponModel();
     }
     joined = true;
+    document.body.classList.add('inGame');
     refreshWeaponHud();
     renderHealth(myHealth, myAlive);
+    // No celular os controles de toque já começam ativos
+    if (isTouchMode() && myAlive && gameStatus === 'playing' && !isAnyModalOpen()) controls.lock();
   });
 
   socket.on('playerJoined', (p) => {
-    if (p.id !== myId) addRemotePlayer(p);
+    if (p.id === myId) return;
+    addRemotePlayer(p);
+    showSystemMessage(`${p.name || 'Jogador'} entrou na partida`, 'join');
   });
 
-  socket.on('playerLeft', (id) => removeRemotePlayer(id));
+  socket.on('playerLeft', (id) => {
+    const rp = remotePlayers[id];
+    showSystemMessage(`${rp ? rp.data.name : 'Um jogador'} saiu da partida`, 'leave');
+    removeRemotePlayer(id);
+  });
 
   socket.on('playerCharacter', ({ id, character }) => {
     if (id === myId) return;
@@ -1806,6 +1877,17 @@ function showDamageDirection(attackerPos) {
 const move = { forward: false, back: false, left: false, right: false, jumpHeld: false, crouchHeld: false };
 let mouseHeld = false;
 let aimHeld = false;
+// Joystick virtual (celular): x = direita, y = frente, de -1 a 1
+const touchInput = { x: 0, y: 0 };
+
+function resetTouchInput() {
+  touchInput.x = 0;
+  touchInput.y = 0;
+  if (isTouchMode()) {
+    move.jumpHeld = false;
+    move.crouchHeld = false;
+  }
+}
 
 document.addEventListener('keydown', (e) => {
   // Rebinding no modal de configurações
@@ -1880,7 +1962,7 @@ window.addEventListener('blur', () => {
 });
 
 document.addEventListener('mousedown', (e) => {
-  if (!controls.isLocked || !myAlive) return;
+  if (!controls.isLocked || !myAlive || !document.pointerLockElement) return;
   if (e.button === 2) { aimHeld = true; return; }
   if (e.button !== 0) return;
   mouseHeld = true;
@@ -1897,12 +1979,16 @@ document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // Roda do mouse percorre os slots 1 → 2 → faca
 document.addEventListener('wheel', (e) => {
-  if (!controls.isLocked || !myAlive) return;
+  if (!controls.isLocked || !myAlive || !document.pointerLockElement) return;
+  cycleWeapon(e.deltaY > 0 ? 1 : -1);
+}, { passive: true });
+
+// Próxima/anterior arma na ordem dos slots (1 → 2 → faca)
+function cycleWeapon(dir) {
   const order = [myLoadout[0], myLoadout[1], 'knife'];
   const idx = Math.max(0, order.indexOf(myWeaponKey));
-  const next = order[(idx + (e.deltaY > 0 ? 1 : 2)) % 3];
-  trySwitchWeapon(next);
-}, { passive: true });
+  trySwitchWeapon(order[(idx + (dir > 0 ? 1 : 2)) % 3]);
+}
 
 // Tecla de reset: o servidor decide a morte
 function tryReset() {
@@ -2044,6 +2130,10 @@ function updateMovement(dt) {
   if (move.back) wish.sub(forwardVec);
   if (move.right) wish.add(rightVec);
   if (move.left) wish.sub(rightVec);
+  // Joystick do celular (zona morta pequena; a direção conta, não a força)
+  if (Math.hypot(touchInput.x, touchInput.y) > 0.22) {
+    wish.addScaledVector(forwardVec, touchInput.y).addScaledVector(rightVec, touchInput.x);
+  }
   if (wish.lengthSq() > 0) wish.normalize();
 
   updateCrouch(dt);

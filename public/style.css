@@ -495,3 +495,117 @@ kbd {
   #charPreviewCanvas { height: 300px; }
   .charOptionsCol { max-height: none; }
 }
+
+/* Mensagens do sistema (entrou / saiu) */
+#systemFeed { position: absolute; top: 64px; left: 14px; display: flex; flex-direction: column; gap: 5px; align-items: flex-start; max-width: 42vw; }
+.sysMsg {
+  display: flex; align-items: center; gap: 8px; padding: 5px 12px 5px 6px; border-radius: 8px; font: 600 14px var(--font-body);
+  background: rgba(10, 14, 22, 0.72); border: 1px solid var(--line); color: var(--text); animation: sysIn .25s ease-out; transition: opacity .6s;
+}
+.sysMsg i {
+  width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; font: 700 15px/1 var(--font-display); font-style: normal;
+  background: #1e293b; color: var(--muted);
+}
+.sysMsg.join i { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
+.sysMsg.leave i { background: rgba(244, 63, 94, 0.18); color: #fb7185; }
+.sysMsg span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sysMsg.fade { opacity: 0; }
+@keyframes sysIn { from { transform: translateX(-24px); opacity: 0; } }
+
+/* =============================================================================
+   CELULAR (CONTROLES DE TOQUE)
+   ============================================================================= */
+#touchControls, .touchOnly, #touchStick, #rotateHint { display: none; }
+body.touchMode .touchOnly { display: inline-block; }
+body.touchMode .controlsHint { display: none; }
+body.touchMode canvas { touch-action: none; }
+body.touchMode.controlsActive #touchControls { display: block; }
+#touchControls { position: absolute; inset: 0; pointer-events: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.touchZone { position: absolute; top: 96px; bottom: 0; pointer-events: auto; touch-action: none; }
+#touchMoveZone { left: 0; width: 42%; }
+#touchLookZone { left: 42%; right: 0; }
+
+/* Joystick: aparece onde o polegar encosta */
+#touchStick {
+  position: absolute; left: 0; top: 0; width: 112px; height: 112px; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
+  border: 2px solid rgba(255, 255, 255, 0.25);
+}
+#touchStick.active { display: block; }
+#touchStickKnob {
+  position: absolute; left: 32px; top: 32px; width: 48px; height: 48px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.35); border: 2px solid rgba(255, 255, 255, 0.6); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+/* Botões de ação (lado direito) */
+.tBtn {
+  position: absolute; width: 60px; height: 60px; border-radius: 50%; padding: 0; pointer-events: auto; touch-action: none;
+  display: grid; place-items: center; background: rgba(15, 23, 42, 0.45); border: 2px solid rgba(255, 255, 255, 0.28);
+  color: #fff; -webkit-tap-highlight-color: transparent;
+}
+.tBtn svg { width: 46%; height: 46%; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.tBtn.big { width: 84px; height: 84px; background: rgba(220, 38, 38, 0.35); border-color: rgba(252, 165, 165, 0.55); }
+.tBtn.small { width: 50px; height: 50px; }
+.tBtn.pressed { transform: scale(0.92); background: rgba(34, 211, 238, 0.35); border-color: rgba(103, 232, 249, 0.9); }
+.tBtn.big.pressed { background: rgba(248, 113, 113, 0.6); }
+.tBtn.on { background: rgba(34, 211, 238, 0.4); border-color: rgba(103, 232, 249, 0.9); }
+.tBtn.disabled { opacity: 0.35; }
+#tFire { right: calc(104px + env(safe-area-inset-right)); bottom: 58px; }
+#tJump { right: calc(20px + env(safe-area-inset-right)); bottom: 118px; }
+#tCrouch { right: calc(24px + env(safe-area-inset-right)); bottom: 34px; }
+#tAim { right: calc(200px + env(safe-area-inset-right)); bottom: 124px; }
+#tReload { right: calc(206px + env(safe-area-inset-right)); bottom: 40px; }
+#tSwap { right: calc(126px + env(safe-area-inset-right)); bottom: 158px; }
+
+/* HUD reorganizado para os polegares */
+body.touchMode #mapName, body.touchMode #speedometer { display: none; }
+body.touchMode #topBar { top: 8px; }
+body.touchMode #timer { font-size: 22px; }
+body.touchMode #hudButtons { top: 8px; right: calc(10px + env(safe-area-inset-right)); gap: 6px; }
+body.touchMode #hudButtons button { padding: 7px 10px; font-size: 12px; }
+body.touchMode #bottomLeft { top: 8px; bottom: auto; left: calc(10px + env(safe-area-inset-left)); }
+body.touchMode #healthWrap { padding: 6px 10px; gap: 8px; }
+body.touchMode #healthText { font-size: 24px; min-width: 38px; }
+body.touchMode #healthBar { width: 100px; height: 9px; }
+body.touchMode #systemFeed { top: 62px; left: calc(10px + env(safe-area-inset-left)); }
+body.touchMode .sysMsg { font-size: 12px; padding: 3px 10px 3px 4px; }
+body.touchMode #killfeed { top: 104px; }
+body.touchMode .kfEntry { font-size: 12px; padding: 3px 8px; }
+body.touchMode .kfEntry img { height: 16px; width: 32px; }
+body.touchMode #bottomCenter { top: 50px; bottom: auto; }
+body.touchMode #hotbar { pointer-events: auto; gap: 6px; }
+body.touchMode .hotSlot { width: 70px; height: 40px; border-radius: 9px; }
+body.touchMode .hotSlot img { width: 54px; height: 28px; }
+body.touchMode .hotSlot.active { transform: translateY(3px); }
+body.touchMode .hotKey { display: none; }
+body.touchMode .hotAmmo { font-size: 11px; }
+body.touchMode #ammoPanel { left: 50%; right: auto; bottom: 12px; transform: translateX(-50%); min-width: 0; padding: 4px 12px; text-align: center; }
+body.touchMode #weaponName { font-size: 10px; }
+body.touchMode #ammoCount { font-size: 26px; }
+body.touchMode #ammoMax { font-size: 13px; }
+body.touchMode .ammoRow { justify-content: center; }
+body.touchMode #reloadHint { display: none !important; }
+body.touchMode #weaponPopup { bottom: 80px; font-size: 16px; }
+body.touchMode #fpsCounter { top: auto; bottom: 6px; left: calc(10px + env(safe-area-inset-left)); font-size: 11px; }
+body.touchMode .nameTag { transform-origin: center bottom; }
+
+/* Aviso para virar o celular */
+#rotateHint {
+  position: fixed; inset: 0; z-index: 200; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  background: rgba(3, 6, 10, 0.94); color: var(--text); font: 700 18px var(--font-display); text-align: center; padding: 24px;
+}
+.rotateIcon { font-size: 54px; animation: rotatePhone 1.6s ease-in-out infinite; }
+@keyframes rotatePhone { 0%, 30% { transform: rotate(0deg); } 60%, 100% { transform: rotate(-90deg); } }
+@media (orientation: portrait) {
+  body.touchMode.inGame #rotateHint { display: flex; }
+}
+
+/* Telas baixas (celular deitado): menus mais compactos */
+@media (max-height: 500px) {
+  .panel { max-height: 96vh; padding: 14px; }
+  .settingsHeader h2 { font-size: 20px; }
+  .characterBody { grid-template-columns: 220px 1fr; }
+  #charPreviewCanvas { height: 240px; }
+  .charOptionsCol { max-height: 300px; }
+  .deathCard { transform: scale(0.85); }
+}

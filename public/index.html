@@ -2,12 +2,14 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
 <title>FFA FPS</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css?v=21" />
+<link rel="stylesheet" href="style.css?v=22" />
 </head>
 <body>
 
@@ -83,11 +85,25 @@
 
   <div id="hudButtons">
     <button id="openLoadoutHudBtn" type="button" title="Trocar armas (B)">🎒 Armas</button>
+    <button id="touchScoreBtn" type="button" title="Placar" class="touchOnly">📋</button>
     <button id="openCharacterHudBtn" type="button" title="Personagem">👕</button>
     <button id="openSettingsHudBtn" type="button" title="Configurações">⚙️</button>
   </div>
 
+  <!-- CONTROLES DE TOQUE (celular) -->
+  <div id="touchControls">
+    <div id="touchMoveZone" class="touchZone"></div>
+    <div id="touchLookZone" class="touchZone"></div>
+    <div id="touchStick"><div id="touchStickKnob"></div></div>
+    <button type="button" class="tBtn big" data-tbtn="fire" id="tFire" aria-label="Atirar"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></svg></button>
+    <button type="button" class="tBtn" data-tbtn="aim" id="tAim" aria-label="Mirar"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="8" rx="2"/><circle cx="12" cy="12" r="2.2"/></svg></button>
+    <button type="button" class="tBtn" data-tbtn="jump" id="tJump" aria-label="Pular"><svg viewBox="0 0 24 24"><path d="M12 19V6M6 11l6-6 6 6"/></svg></button>
+    <button type="button" class="tBtn" data-tbtn="crouch" id="tCrouch" aria-label="Agachar"><svg viewBox="0 0 24 24"><path d="M12 5v13M6 13l6 6 6-6"/></svg></button>
+    <button type="button" class="tBtn small" data-tbtn="reload" id="tReload" aria-label="Recarregar"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg></button>
+    <button type="button" class="tBtn small" data-tbtn="swap" id="tSwap" aria-label="Trocar arma"><svg viewBox="0 0 24 24"><path d="M4 8h14l-4-4M20 16H6l4 4"/></svg></button>
+  </div>
   <div id="killfeed"></div>
+  <div id="systemFeed"></div>
   <div id="killBanner"></div>
   <div id="weaponPopup"></div>
 
@@ -121,6 +137,9 @@
     </table>
   </div>
 </div>
+
+<!-- AVISO: GIRE O CELULAR -->
+<div id="rotateHint"><div class="rotateIcon">📱</div><p>Gire o celular para jogar na horizontal</p></div>
 
 <!-- TELA DE MORTE -->
 <div id="deathScreen" class="overlay hidden">
@@ -333,6 +352,25 @@
       </div>
 
       <div class="settingsSection">
+        <h3>Celular (toque)</h3>
+        <div class="settingRow">
+          <label for="touchModeSelect">Controles de toque</label>
+          <select id="touchModeSelect" class="gfxSelect">
+            <option value="auto">Automático</option>
+            <option value="on">Sempre ligados</option>
+            <option value="off">Desligados</option>
+          </select>
+        </div>
+        <div class="settingRow">
+          <label for="touchSensRange">Sensibilidade ao arrastar</label>
+          <div class="rangeWrap">
+            <input type="range" id="touchSensRange" min="0.2" max="3.0" step="0.05" value="1.0" />
+            <input type="number" id="touchSensNum" min="0.2" max="3.0" step="0.05" value="1.0" />
+          </div>
+        </div>
+      </div>
+
+      <div class="settingsSection">
         <h3>Mira na tela (crosshair)</h3>
         <div class="crosshairEditor">
           <div class="crosshairControls">
@@ -415,15 +453,16 @@
 <script src="/socket.io/socket.io.min.js"></script>
 <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
 <!-- O parâmetro de versão impede que o navegador mantenha uma versão antiga do jogo em cache. -->
-<script src="constants.js?v=21"></script>
-<script src="characterOptions.js?v=21"></script>
-<script src="maps.js?v=21"></script>
-<script src="textures.js?v=21"></script>
-<script src="weapons.js?v=21"></script>
-<script src="character.js?v=21"></script>
-<script src="audio.js?v=21"></script>
-<script src="effects.js?v=21"></script>
-<script src="ui.js?v=21"></script>
-<script src="game.js?v=21"></script>
+<script src="constants.js?v=22"></script>
+<script src="characterOptions.js?v=22"></script>
+<script src="maps.js?v=22"></script>
+<script src="textures.js?v=22"></script>
+<script src="weapons.js?v=22"></script>
+<script src="character.js?v=22"></script>
+<script src="audio.js?v=22"></script>
+<script src="effects.js?v=22"></script>
+<script src="ui.js?v=22"></script>
+<script src="game.js?v=22"></script>
+<script src="touch.js?v=22"></script>
 </body>
 </html>
