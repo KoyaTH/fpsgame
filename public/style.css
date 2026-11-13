@@ -240,6 +240,9 @@ kbd {
 #mapName, #networkStatus { font: 600 13px var(--font-body); color: var(--muted); padding: 7px 12px; border-radius: 9px; background: rgba(15, 21, 31, 0.6); }
 #networkStatus.websocket { color: var(--accent-2); }
 #networkStatus.polling { color: var(--gold); }
+#networkStatus.pingGood { color: #4ade80; }
+#networkStatus.pingOk { color: var(--gold); }
+#networkStatus.pingBad { color: #f87171; }
 #hudButtons { position: absolute; top: 14px; right: 14px; display: flex; gap: 8px; }
 #hudButtons button { background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 9px; padding: 8px 12px; font: 600 13px var(--font-body); }
 #hudButtons button:hover { border-color: #475569; }
@@ -423,6 +426,28 @@ kbd {
 .keybindBtn { min-width: 82px; padding: 6px 10px; border-radius: 7px; border: 1px solid #334155; background: #0f172a; color: var(--text); font-weight: 700; }
 .keybindBtn.listening { border-color: var(--gold); color: var(--gold); animation: pulse .8s infinite; }
 .settingsFooter { display: flex; justify-content: space-between; gap: 10px; margin-top: 14px; }
+
+/* Aba de gráficos */
+.gfxPresets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.gfxPresetBtn {
+  padding: 10px 6px; border-radius: 9px; border: 1px solid #334155; background: #0f172a; color: var(--muted);
+  font: 700 15px var(--font-display); letter-spacing: 1px; text-transform: uppercase;
+}
+.gfxPresetBtn:hover { color: var(--text); border-color: #475569; }
+.gfxPresetBtn.active { background: rgba(34, 211, 238, 0.12); border-color: rgba(34, 211, 238, 0.6); color: var(--text); }
+.gfxHint { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+.gfxSelect {
+  width: 100%; padding: 7px 8px; border-radius: 7px; border: 1px solid #334155; background: #0f172a; color: var(--text); font: 600 13px var(--font-body);
+}
+.gfxValue { width: 52px; text-align: right; font: 700 14px var(--font-display); color: var(--text); }
+
+/* Contador de FPS */
+#fpsCounter {
+  position: fixed; top: 8px; left: 10px; z-index: 30; padding: 3px 8px; border-radius: 6px;
+  background: rgba(2, 6, 23, 0.6); color: #a7f3d0; font: 700 13px var(--font-display); letter-spacing: 0.5px; pointer-events: none;
+}
+#fpsCounter.warn { color: #fde68a; }
+#fpsCounter.bad { color: #fca5a5; }
 
 /* =============================================================================
    TELAS PEQUENAS

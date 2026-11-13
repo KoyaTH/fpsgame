@@ -18,6 +18,20 @@ const fx = {
 
 const PARTICLE_COUNT = 400;
 const DECAL_COUNT = 80;
+const TRACER_COUNT = 48;
+
+// Qualidade dos efeitos (aba Gráficos): multiplica partículas e liga/desliga marcas
+const FX_QUALITY = {
+  baixo: { particles: 0.35, decals: false },
+  medio: { particles: 0.7, decals: true },
+  alto: { particles: 1, decals: true },
+};
+let fxQuality = FX_QUALITY.alto;
+
+function setEffectsQuality(level) {
+  fxQuality = FX_QUALITY[level] || FX_QUALITY.alto;
+  if (!fxQuality.decals) fx.decals.forEach((d) => { d.visible = false; });
+}
 const _m4 = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
 const _s = new THREE.Vector3();
@@ -86,7 +100,18 @@ function initEffects(scene) {
     scene.add(m);
     fx.decals.push(m);
   }
-  fx.tracers.length = 0;
+  // Rastros: pool fixo, reaproveitado em vez de criar material a cada tiro
+  fx.tracers = [];
+  for (let i = 0; i < TRACER_COUNT; i++) {
+    const mesh = new THREE.Mesh(TRACER_GEO, new THREE.MeshBasicMaterial({
+      transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+    fx.tracers.push({ mesh, life: 0, maxLife: 0.12 });
+  }
+  fx.tracerCursor = 0;
   fx.flashes.length = 0;
   fx.corpses.length = 0;
 }
@@ -94,8 +119,9 @@ function initEffects(scene) {
 // -----------------------------------------------------------------------------
 // PARTÍCULAS
 // -----------------------------------------------------------------------------
-function emitParticles(origin, normal, { count = 8, color = 0xffd27a, speed = 4, spread = 0.9, life = 0.4, size = 0.06, gravity = -12 }) {
+function emitParticles(origin, normal, { count: baseCount = 8, color = 0xffd27a, speed = 4, spread = 0.9, life = 0.4, size = 0.06, gravity = -12 }) {
   if (!fx.particles) return;
+  const count = Math.max(1, Math.round(baseCount * fxQuality.particles));
   for (let i = 0; i < count; i++) {
     const idx = fx.particleCursor;
     fx.particleCursor = (fx.particleCursor + 1) % PARTICLE_COUNT;
@@ -144,6 +170,7 @@ function spawnImpact(point, normal, surfaceColor) {
   emitParticles(point, normal, { count: 7, color: 0xffd27a, speed: 6, life: 0.25, size: 0.045, gravity: -14 });
   emitParticles(point, normal, { count: 6, color: surfaceColor ?? 0x9a9a9a, speed: 2.5, life: 0.6, size: 0.09, gravity: -6, spread: 0.6 });
 
+  if (!fxQuality.decals) return;
   const decal = fx.decals[fx.decalCursor];
   fx.decalCursor = (fx.decalCursor + 1) % DECAL_COUNT;
   decal.position.copy(point).addScaledVector(normal, 0.01);
@@ -176,30 +203,28 @@ function updateDecals(dt) {
 const TRACER_GEO = new THREE.BoxGeometry(1, 1, 1);
 
 function spawnBulletTracer(from, to, color = 0xffea55, width = 0.025) {
-  if (!fx.scene) return;
+  if (!fx.scene || fx.tracers.length === 0) return;
   const dir = _p.copy(to).sub(from);
   const len = dir.length();
   if (len < 0.1) return;
-  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
-  const mesh = new THREE.Mesh(TRACER_GEO, mat);
+  const t = fx.tracers[fx.tracerCursor];
+  fx.tracerCursor = (fx.tracerCursor + 1) % fx.tracers.length;
+  const mesh = t.mesh;
+  mesh.material.color.setHex(color);
+  mesh.material.opacity = 0.9;
   mesh.position.copy(from).addScaledVector(dir, 0.5);
   mesh.quaternion.setFromUnitVectors(_zAxis, dir.normalize());
   mesh.scale.set(width, width, len);
-  fx.scene.add(mesh);
-  fx.tracers.push({ mesh, life: 0.12, maxLife: 0.12 });
+  mesh.visible = true;
+  t.life = t.maxLife;
 }
 
 function updateTracers(dt) {
-  for (let i = fx.tracers.length - 1; i >= 0; i--) {
-    const t = fx.tracers[i];
+  for (const t of fx.tracers) {
+    if (t.life <= 0) continue;
     t.life -= dt;
-    if (t.life <= 0) {
-      fx.scene.remove(t.mesh);
-      t.mesh.material.dispose();
-      fx.tracers.splice(i, 1);
-    } else {
-      t.mesh.material.opacity = 0.9 * (t.life / t.maxLife);
-    }
+    if (t.life <= 0) t.mesh.visible = false;
+    else t.mesh.material.opacity = 0.9 * (t.life / t.maxLife);
   }
 }
 
@@ -276,8 +301,7 @@ function updateCorpses(dt) {
 }
 
 function clearTransientEffects() {
-  for (const t of fx.tracers) { fx.scene.remove(t.mesh); t.mesh.material.dispose(); }
-  fx.tracers.length = 0;
+  for (const t of fx.tracers) { t.life = 0; t.mesh.visible = false; }
   for (const c of fx.corpses) fx.scene.remove(c);
   fx.corpses.length = 0;
 }

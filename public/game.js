@@ -51,7 +51,16 @@ const DEFAULT_SETTINGS = {
   sensAimY: 0.75,
   invertY: false,
   fov: 90,
-  shadows: true,
+  graphics: {
+    preset: 'alto',     // baixo | medio | alto | ultra | personalizado
+    resolution: 100,    // % da resolução nativa (densidade de pixels limitada a 2x)
+    shadows: 'media',   // off | baixa | media | alta
+    textures: 'alta',   // baixa | media | alta (filtragem anisotrópica)
+    effects: 'alto',    // baixo | medio | alto
+    antialias: true,
+    fpsLimit: 0,        // 0 = sem limite
+    showFps: false,
+  },
   crosshair: {
     style: 'cruzPonto', // cruz | cruzPonto | ponto | circulo | t
     color: '#ffffff',
@@ -92,7 +101,14 @@ function loadSavedSettings() {
         ...parsed,
         keybinds: { ...DEFAULT_SETTINGS.keybinds, ...(parsed.keybinds || {}) },
         crosshair: { ...DEFAULT_SETTINGS.crosshair, ...(parsed.crosshair || {}) },
+        graphics: { ...DEFAULT_SETTINGS.graphics, ...(parsed.graphics || {}) },
       };
+      // Configuração antiga (só liga/desliga sombras)
+      if (parsed.shadows === false && !parsed.graphics) {
+        userSettings.graphics.shadows = 'off';
+        userSettings.graphics.preset = 'personalizado';
+      }
+      delete userSettings.shadows;
     }
   } catch (e) { /* armazenamento indisponível */ }
 }
@@ -120,16 +136,15 @@ function initSettingsUI() {
   loadSavedSettings();
   syncSettingsToUI();
 
-  const tabMouseBtn = $('tabMouseBtn');
-  const tabKeysBtn = $('tabKeysBtn');
-  const showTab = (mouse) => {
-    tabMouseBtn.classList.toggle('active', mouse);
-    tabKeysBtn.classList.toggle('active', !mouse);
-    $('tabMouseContent').classList.toggle('hidden', !mouse);
-    $('tabKeysContent').classList.toggle('hidden', mouse);
-  };
-  tabMouseBtn.addEventListener('click', () => showTab(true));
-  tabKeysBtn.addEventListener('click', () => showTab(false));
+  const tabButtons = document.querySelectorAll('.settingsTabs .tabBtn');
+  tabButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      tabButtons.forEach((b) => {
+        b.classList.toggle('active', b === btn);
+        $(b.dataset.tab).classList.toggle('hidden', b !== btn);
+      });
+    });
+  });
 
   const setupRangePair = (rangeId, numId, settingKey, onChange) => {
     const range = $(rangeId);
@@ -180,10 +195,8 @@ function initSettingsUI() {
   $('chDynamicCheck').addEventListener('change', (e) => { ch().dynamic = e.target.checked; });
   $('chOutlineCheck').addEventListener('change', (e) => { ch().outline = e.target.checked; refreshCrosshairLook(); });
 
-  $('shadowsCheck').addEventListener('change', (e) => {
-    userSettings.shadows = e.target.checked;
-    applyShadowSetting();
-  });
+  initGraphicsSettingsUI();
+  applyGraphicsSettings();
 
   document.querySelectorAll('.keybindBtn').forEach((btn) => {
     btn.addEventListener('click', (e) => {
@@ -208,7 +221,7 @@ function initSettingsUI() {
     userSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
     saveSettings();
     syncSettingsToUI();
-    applyShadowSetting();
+    applyGraphicsSettings();
   });
 }
 
@@ -231,7 +244,7 @@ function syncSettingsToUI() {
   setPair('sensAimYRange', 'sensAimYNum', userSettings.sensAimY);
   setPair('fovRange', 'fovNum', userSettings.fov);
   $('invertYCheck').checked = !!userSettings.invertY;
-  $('shadowsCheck').checked = !!userSettings.shadows;
+  syncGraphicsUI();
   const c = userSettings.crosshair;
   $('chStyleSelect').value = c.style;
   $('chSizeRange').value = c.size; $('chSizeNum').value = c.size;
@@ -257,12 +270,168 @@ function refreshCrosshairLook() {
   document.querySelectorAll('.chSwatch').forEach((b) => b.classList.toggle('active', b.dataset.color === c.color));
 }
 
-function applyShadowSetting() {
+// =============================================================================
+// GRÁFICOS (PRESETS, RESOLUÇÃO, SOMBRAS, TEXTURAS, EFEITOS, LIMITE DE FPS)
+// =============================================================================
+const GFX_PRESETS = {
+  baixo: { resolution: 65, shadows: 'off', textures: 'baixa', effects: 'baixo', antialias: false },
+  medio: { resolution: 85, shadows: 'baixa', textures: 'media', effects: 'medio', antialias: false },
+  alto: { resolution: 100, shadows: 'media', textures: 'alta', effects: 'alto', antialias: true },
+  ultra: { resolution: 100, shadows: 'alta', textures: 'alta', effects: 'alto', antialias: true },
+};
+const SHADOW_LEVELS = {
+  off: null,
+  baixa: { size: 1024, soft: false },
+  media: { size: 2048, soft: false },
+  alta: { size: 2048, soft: true },
+};
+const TEXTURE_ANISOTROPY = { baixa: 1, media: 4, alta: 8 };
+const PRESET_HINTS = {
+  baixo: 'Máximo desempenho: sem sombras e resolução reduzida.',
+  medio: 'Equilíbrio para placas de vídeo integradas.',
+  alto: 'Boa qualidade para a maioria dos PCs.',
+  ultra: 'Sombras suaves e tudo no máximo.',
+  personalizado: 'Configuração personalizada.',
+};
+
+// Qual preset bate com as opções atuais (ou "personalizado")
+function detectGfxPreset(g) {
+  for (const [name, p] of Object.entries(GFX_PRESETS)) {
+    if (Object.keys(p).every((k) => g[k] === p[k])) return name;
+  }
+  return 'personalizado';
+}
+
+function initGraphicsSettingsUI() {
+  const g = () => userSettings.graphics;
+  const changed = () => {
+    g().preset = detectGfxPreset(g());
+    syncGraphicsUI();
+    applyGraphicsSettings();
+  };
+  document.querySelectorAll('.gfxPresetBtn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      Object.assign(g(), GFX_PRESETS[btn.dataset.preset]);
+      changed();
+    });
+  });
+  $('gfxResRange').addEventListener('input', (e) => { g().resolution = parseInt(e.target.value, 10); changed(); });
+  $('gfxShadowSelect').addEventListener('change', (e) => { g().shadows = e.target.value; changed(); });
+  $('gfxTexSelect').addEventListener('change', (e) => { g().textures = e.target.value; changed(); });
+  $('gfxFxSelect').addEventListener('change', (e) => { g().effects = e.target.value; changed(); });
+  $('gfxAACheck').addEventListener('change', (e) => { g().antialias = e.target.checked; changed(); });
+  $('gfxFpsSelect').addEventListener('change', (e) => { g().fpsLimit = parseInt(e.target.value, 10); changed(); });
+  $('gfxShowFpsCheck').addEventListener('change', (e) => { g().showFps = e.target.checked; changed(); });
+}
+
+function syncGraphicsUI() {
+  const g = userSettings.graphics;
+  document.querySelectorAll('.gfxPresetBtn').forEach((b) => b.classList.toggle('active', b.dataset.preset === g.preset));
+  $('gfxPresetHint').textContent = PRESET_HINTS[g.preset] || PRESET_HINTS.personalizado;
+  $('gfxResRange').value = g.resolution;
+  $('gfxResValue').textContent = `${g.resolution}%`;
+  $('gfxShadowSelect').value = g.shadows;
+  $('gfxTexSelect').value = g.textures;
+  $('gfxFxSelect').value = g.effects;
+  $('gfxAACheck').checked = !!g.antialias;
+  $('gfxFpsSelect').value = String(g.fpsLimit);
+  $('gfxShowFpsCheck').checked = !!g.showFps;
+}
+
+function getRenderPixelRatio() {
+  return Math.min(window.devicePixelRatio || 1, 2) * (userSettings.graphics.resolution / 100);
+}
+
+// Cria o renderer com as opções atuais (anti-aliasing só muda recriando o contexto)
+function createRenderer() {
+  const r = new THREE.WebGLRenderer({ antialias: !!userSettings.graphics.antialias, powerPreference: 'high-performance' });
+  r.setPixelRatio(getRenderPixelRatio());
+  r.setSize(window.innerWidth, window.innerHeight);
+  r.outputEncoding = THREE.sRGBEncoding;
+  r.toneMapping = THREE.ACESFilmicToneMapping;
+  r.toneMappingExposure = 1.1;
+  r.userData = { antialias: !!userSettings.graphics.antialias };
+  document.body.appendChild(r.domElement);
+  setTextureAnisotropy(r);
+  return r;
+}
+
+function recreateRenderer() {
+  const old = renderer;
+  controls.unlock();
+  // O mapa de sombra pertence ao contexto antigo
+  if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; }
+  renderer = createRenderer();
+  old.domElement.remove();
+  old.dispose();
+  old.forceContextLoss();
+}
+
+// Aplica tudo que pode mudar em jogo; chamado ao entrar e a cada alteração
+function applyGraphicsSettings() {
+  const g = userSettings.graphics;
+  $('fpsCounter').classList.toggle('hidden', !g.showFps);
+  setEffectsQuality(g.effects);
   if (!renderer) return;
-  renderer.shadowMap.enabled = !!userSettings.shadows;
-  sunLight.castShadow = !!userSettings.shadows;
-  // Materiais precisam recompilar quando as sombras ligam/desligam
-  scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
+
+  if (renderer.userData.antialias !== !!g.antialias) recreateRenderer();
+  renderer.setPixelRatio(getRenderPixelRatio());
+
+  const level = SHADOW_LEVELS[g.shadows] || null;
+  const enabled = !!level;
+  const type = level && level.soft ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
+  let needsRecompile = renderer.shadowMap.enabled !== enabled || (enabled && renderer.shadowMap.type !== type);
+  if (level && sunLight.shadow.mapSize.x !== level.size) {
+    sunLight.shadow.mapSize.set(level.size, level.size);
+    if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; }
+  }
+  renderer.shadowMap.enabled = enabled;
+  renderer.shadowMap.type = type;
+  renderer.shadowMap.needsUpdate = true;
+  sunLight.castShadow = enabled;
+
+  setTextureQuality(TEXTURE_ANISOTROPY[g.textures] || 8, scene);
+
+  // Luz do disparo só nos efeitos médio/alto (cada luz pesa em todos os pixels)
+  const muzzleOn = g.effects !== 'baixo';
+  if (muzzleLight.visible !== muzzleOn) { muzzleLight.visible = muzzleOn; needsRecompile = true; }
+
+  // Materiais precisam recompilar quando sombras/luzes mudam
+  if (needsRecompile) {
+    scene.traverse((o) => {
+      if (!o.material) return;
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.needsUpdate = true; });
+    });
+  }
+}
+
+// Limite de FPS e contador
+const fpsStats = { frames: 0, since: 0, lastFrameAt: 0 };
+
+// Retorna false quando este frame deve ser pulado por causa do limite
+function shouldRenderFrame(now) {
+  const limit = userSettings.graphics.fpsLimit;
+  if (limit > 0) {
+    const minDt = 1000 / limit;
+    if (now - fpsStats.lastFrameAt < minDt - 0.5) return false;
+    fpsStats.lastFrameAt = Math.max(fpsStats.lastFrameAt + minDt, now - minDt);
+  }
+  return true;
+}
+
+function updateFpsCounter(now) {
+  if (!userSettings.graphics.showFps) return;
+  fpsStats.frames++;
+  const elapsed = now - fpsStats.since;
+  if (elapsed < 500) return;
+  const fps = Math.round(fpsStats.frames * 1000 / elapsed);
+  const el = $('fpsCounter');
+  const ping = net.ping !== null ? ` · ping ${Math.round(net.ping)} ms` : '';
+  el.textContent = `${fps} FPS · ${(elapsed / fpsStats.frames).toFixed(1)} ms/quadro${ping}`;
+  el.classList.toggle('warn', fps < 55 && fps >= 30);
+  el.classList.toggle('bad', fps < 30);
+  fpsStats.frames = 0;
+  fpsStats.since = now;
 }
 
 initSettingsUI();
@@ -394,24 +563,13 @@ function initThree() {
   camera.rotation.order = 'YXZ';
   scene.add(camera);
 
-  renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.outputEncoding = THREE.sRGBEncoding;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.1;
-  renderer.shadowMap.enabled = !!userSettings.shadows;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  document.body.appendChild(renderer.domElement);
-  setTextureAnisotropy(renderer);
+  renderer = createRenderer();
 
   hemiLight = new THREE.HemisphereLight(0xffffff, 0x444b59, 0.85);
   scene.add(hemiLight);
 
   sunLight = new THREE.DirectionalLight(0xfffaed, 1.25);
   sunLight.position.set(30, 50, 20);
-  sunLight.castShadow = !!userSettings.shadows;
-  sunLight.shadow.mapSize.set(2048, 2048);
   sunLight.shadow.bias = -0.0005;
   sunLight.shadow.normalBias = 0.02;
   const shadowCam = sunLight.shadow.camera;
@@ -435,11 +593,13 @@ function initThree() {
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
+    renderer.setPixelRatio(getRenderPixelRatio()); // muda ao arrastar entre monitores
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
   loadMap(currentMapId);
-  animate();
+  applyGraphicsSettings();
+  animate(performance.now());
 }
 
 // Libera geometrias/materiais da GPU (texturas de superfície são compartilhadas)
@@ -489,15 +649,118 @@ function loadMap(mapId) {
     box.updateMatrixWorld(true);
     box.userData.bbox = new THREE.Box3().setFromObject(box);
   }
-  // Só as peças do mapa (filhos diretos da cena); jogadores e arma continuam animando
+  batchStaticMeshes(keep);
+
+  initEffects(scene);
+}
+
+// -----------------------------------------------------------------------------
+// LOTES ESTÁTICOS: junta as peças do mapa com o mesmo material em um só mesh.
+// A cidade tinha ~880 meshes (um draw call cada, em dobro com sombras); depois
+// do lote sobram poucas dezenas. Os meshes originais saem da cena mas continuam
+// em `obstacles` para colisão e raycast (que só usam matrixWorld e bbox).
+// -----------------------------------------------------------------------------
+let mapSourceMeshes = [];
+
+function batchMaterialKey(mesh) {
+  const m = mesh.material;
+  if (!m || Array.isArray(m) || !m.isMeshStandardMaterial || m.transparent) return null;
+  const g = mesh.geometry;
+  if (!g || !g.isBufferGeometry || !g.attributes.position || !g.attributes.normal || !g.attributes.uv) return null;
+  if (mesh.userData.isGround || mesh.userData.noBatch) return null; // noBatch: peça que anima
+  return [
+    m.color.getHex(), m.roughness, m.metalness, m.emissive.getHex(), m.emissiveIntensity,
+    m.map ? m.map.uuid : '', m.side, mesh.castShadow ? 1 : 0, mesh.receiveShadow ? 1 : 0,
+  ].join('|');
+}
+
+// Junta geometrias já transformadas para o espaço do mundo
+function mergeWorldGeometries(meshes) {
+  let vertexCount = 0;
+  let indexCount = 0;
+  for (const m of meshes) {
+    const g = m.geometry;
+    vertexCount += g.attributes.position.count;
+    indexCount += g.index ? g.index.count : g.attributes.position.count;
+  }
+  const position = new Float32Array(vertexCount * 3);
+  const normal = new Float32Array(vertexCount * 3);
+  const uv = new Float32Array(vertexCount * 2);
+  const index = vertexCount > 65535 ? new Uint32Array(indexCount) : new Uint16Array(indexCount);
+  const normalMatrix = new THREE.Matrix3();
+  const v = new THREE.Vector3();
+  let vo = 0;
+  let io = 0;
+  for (const m of meshes) {
+    const g = m.geometry;
+    const pos = g.attributes.position;
+    const nor = g.attributes.normal;
+    const tex = g.attributes.uv;
+    normalMatrix.getNormalMatrix(m.matrixWorld);
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld);
+      position[(vo + i) * 3] = v.x; position[(vo + i) * 3 + 1] = v.y; position[(vo + i) * 3 + 2] = v.z;
+      v.fromBufferAttribute(nor, i).applyMatrix3(normalMatrix).normalize();
+      normal[(vo + i) * 3] = v.x; normal[(vo + i) * 3 + 1] = v.y; normal[(vo + i) * 3 + 2] = v.z;
+      uv[(vo + i) * 2] = tex.getX(i); uv[(vo + i) * 2 + 1] = tex.getY(i);
+    }
+    if (g.index) {
+      for (let i = 0; i < g.index.count; i++) index[io++] = g.index.getX(i) + vo;
+    } else {
+      for (let i = 0; i < pos.count; i++) index[io++] = i + vo;
+    }
+    vo += pos.count;
+  }
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.BufferAttribute(position, 3));
+  merged.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
+  merged.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  merged.setIndex(new THREE.BufferAttribute(index, 1));
+  merged.computeBoundingSphere();
+  merged.computeBoundingBox();
+  return merged;
+}
+
+function batchStaticMeshes(keep) {
+  // Libera as peças originais do mapa anterior
+  mapSourceMeshes.forEach(disposeObject);
+  mapSourceMeshes = [];
+
+  const groups = new Map();
+  for (const obj of scene.children) {
+    if (obj === camera || obj.isLight || keep.has(obj)) continue;
+    obj.updateMatrixWorld(true);
+    obj.traverse((o) => {
+      if (!o.isMesh) return;
+      const key = batchMaterialKey(o);
+      if (!key) return;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(o);
+    });
+  }
+
+  for (const meshes of groups.values()) {
+    if (meshes.length < 2) continue;
+    const first = meshes[0];
+    const batch = new THREE.Mesh(mergeWorldGeometries(meshes), first.material);
+    batch.castShadow = first.castShadow;
+    batch.receiveShadow = first.receiveShadow;
+    batch.userData.isBatch = true;
+    batch.matrixAutoUpdate = false;
+    for (const m of meshes) {
+      if (m.parent) m.parent.remove(m);
+      mapSourceMeshes.push(m);
+    }
+    scene.add(batch);
+  }
+
+  // O que sobrou (chão, vidro, peças únicas) também é estático
   for (const o of scene.children) {
     if (o.isMesh && !keep.has(o)) {
       o.updateMatrixWorld(true);
       o.matrixAutoUpdate = false;
     }
   }
-
-  initEffects(scene);
 }
 
 // =============================================================================
@@ -1128,8 +1391,21 @@ function worldToScreen(pos) {
 // =============================================================================
 // REDE (SOCKET.IO)
 // =============================================================================
-const MOVE_SEND_INTERVAL = 1000 / 30; // envia posição a 30Hz
-const INTERP_DELAY = 100;             // ms de atraso para interpolar entre snapshots
+let moveSendInterval = 1000 / 60; // envia posição a 60Hz (o servidor pode pedir menos no init)
+// Atraso de interpolação adaptativo: ~2 intervalos de snapshot + folga para o
+// jitter medido. A 60Hz numa rede estável fica perto de 45ms (antes: 100ms fixos).
+const INTERP_MIN = 40;
+const INTERP_MAX = 150;
+const PING_INTERVAL = 1000;
+const net = {
+  interpDelay: 100,
+  snapInterval: 1000 / 60, // intervalo médio entre snapshots (hora do servidor)
+  jitter: 0,               // variação média na chegada dos snapshots
+  lastSnapT: 0,
+  lastSnapAt: 0,
+  ping: null,              // ida e volta suavizado (ms)
+  pingTimer: null,
+};
 const TELEPORT_DISTANCE = 8;          // acima disso não interpola (respawn)
 let serverTimeOffset = null;          // serverTime - performance.now(), suavizado
 
@@ -1138,18 +1414,19 @@ function connectSocket() {
 
   const updateNetworkStatus = () => {
     const transport = socket.io.engine.transport.name;
-    const status = $('networkStatus');
-    status.textContent = transport === 'websocket' ? 'Online' : 'HTTP polling';
-    status.className = transport;
+    net.transport = transport;
+    renderNetworkStatus();
   };
 
   socket.on('connect', () => {
     updateNetworkStatus();
+    startPingLoop();
     socket.io.engine.on('upgrade', updateNetworkStatus);
     // Entra (ou entra de novo após uma queda de conexão)
     socket.emit('join', { name: myName, loadout: myLoadout });
   });
   socket.on('disconnect', () => {
+    stopPingLoop();
     $('networkStatus').textContent = 'Reconectando...';
     $('networkStatus').className = '';
     myAlive = false;
@@ -1165,6 +1442,7 @@ function connectSocket() {
   socket.on('init', (data) => {
     myId = data.id;
     mySpawnSeq = data.seq || 0;
+    if (data.net && data.net.moveHz > 0) moveSendInterval = 1000 / data.net.moveHz;
     serverTimeOffset = null;
     clearRemotePlayers();
     gameStatus = data.game.status;
@@ -1208,6 +1486,7 @@ function connectSocket() {
 
   // Snapshot: { t, p: [[id, x, y, z, rotY, alive, weaponKey, health, pitch, crouch, grappling], ...] }
   socket.on('state', ({ t, p: list }) => {
+    trackSnapshotTiming(t);
     const sample = t - performance.now();
     if (serverTimeOffset === null || sample > serverTimeOffset) serverTimeOffset = sample;
     else serverTimeOffset += (sample - serverTimeOffset) * 0.02;
@@ -1299,17 +1578,23 @@ function connectSocket() {
       $('healIndicator').classList.add('hidden');
     }
     const rp = remotePlayers[id];
+    // Acerto meu já mostrado na hora do tiro: falta só o número de dano
+    const predicted = attackerId === myId && consumePredictedHit(id);
     if (rp) {
       rp.data.health = health;
-      flashPlayerRed(rp);
-      const chest = rp.group.position.clone().add(new THREE.Vector3(0, headshot ? 1.9 : 1.3, 0));
-      spawnBloodHit(chest, headshot);
+      if (!predicted) {
+        flashPlayerRed(rp);
+        const chest = rp.group.position.clone().add(new THREE.Vector3(0, headshot ? 1.9 : 1.3, 0));
+        spawnBloodHit(chest, headshot);
+      }
     }
     if (attackerId === myId && rp) {
-      showHitmarker(!!headshot, false);
+      if (!predicted) {
+        showHitmarker(!!headshot, false);
+        playHitmarkerSound(!!headshot);
+      }
       const pos = worldToScreen(rp.group.position.clone().add(new THREE.Vector3(0, 2.3, 0)));
       if (pos) showDamageNumber(pos.x, pos.y, damage, !!headshot, false);
-      playHitmarkerSound(!!headshot);
     }
   });
 
@@ -1349,6 +1634,7 @@ function connectSocket() {
       removeRemoteRope(rp);
     }
     if (killerId === myId && id !== myId) {
+      predictedHits.delete(id);
       showHitmarker(!!headshot, true);
       if (rp) {
         const pos = worldToScreen(rp.group.position.clone().add(new THREE.Vector3(0, 2.3, 0)));
@@ -1444,12 +1730,65 @@ function placeLocalPlayer(x, y, z, rotY) {
   lastMoveSent = 0;
 }
 
-// Envia a posição no máximo a 30Hz, com a sequência de spawn atual.
+// -----------------------------------------------------------------------------
+// PING E ATRASO DE INTERPOLAÇÃO
+// -----------------------------------------------------------------------------
+function startPingLoop() {
+  stopPingLoop();
+  const measure = () => {
+    if (!socket || !socket.connected) return;
+    const sentAt = performance.now();
+    socket.emit('latency', sentAt, () => {
+      const rtt = performance.now() - sentAt;
+      net.ping = net.ping === null ? rtt : net.ping * 0.7 + rtt * 0.3;
+      renderNetworkStatus();
+    });
+  };
+  measure();
+  net.pingTimer = setInterval(measure, PING_INTERVAL);
+}
+
+function stopPingLoop() {
+  if (net.pingTimer) clearInterval(net.pingTimer);
+  net.pingTimer = null;
+  net.ping = null;
+}
+
+function renderNetworkStatus() {
+  const status = $('networkStatus');
+  const label = net.transport === 'websocket' ? 'Online' : 'HTTP polling';
+  if (net.ping === null) {
+    status.textContent = label;
+    status.className = net.transport || '';
+    return;
+  }
+  const ms = Math.round(net.ping);
+  status.textContent = `${label} · ${ms} ms`;
+  status.className = `${net.transport} ${ms < 60 ? 'pingGood' : ms < 120 ? 'pingOk' : 'pingBad'}`;
+}
+
+// Mede o intervalo real e o jitter dos snapshots e ajusta o atraso de interpolação
+function trackSnapshotTiming(serverT) {
+  const now = performance.now();
+  if (net.lastSnapT && serverT > net.lastSnapT) {
+    const interval = serverT - net.lastSnapT;
+    const arrival = now - net.lastSnapAt;
+    net.snapInterval += (Math.min(interval, 200) - net.snapInterval) * 0.05;
+    net.jitter += (Math.min(Math.abs(arrival - interval), 200) - net.jitter) * 0.05;
+    const target = Math.max(INTERP_MIN, Math.min(INTERP_MAX, net.snapInterval * 2 + net.jitter * 2.5));
+    // Sobe rápido (evita travadas) e desce devagar (evita acelerar os outros)
+    net.interpDelay += (target - net.interpDelay) * (target > net.interpDelay ? 0.2 : 0.02);
+  }
+  net.lastSnapT = serverT;
+  net.lastSnapAt = now;
+}
+
+// Envia a posição no máximo a 60Hz, com a sequência de spawn atual.
 // y vai sempre como "olho em pé" (pés + 1.6); o agachamento vai em crouch.
 let lastMoveSent = 0;
 function sendMove() {
   const now = performance.now();
-  if (now - lastMoveSent < MOVE_SEND_INTERVAL) return;
+  if (now - lastMoveSent < moveSendInterval) return;
   lastMoveSent = now;
   const p = camera.position;
   const feet = p.y - eyeHeight;
@@ -1847,6 +2186,8 @@ const GRAPPLE_RANGE = 60;
 const GRAPPLE_REEL_SPEED = 3.5;
 const GRAPPLE_MIN_LENGTH = 3;
 const GRAPPLE_SWING_ACCEL = 9;
+const GRAPPLE_PULL_ACCEL = 13;     // puxão suave em direção ao ponto (m/s²)
+const GRAPPLE_PULL_MAX_SPEED = 10; // o puxão para de acelerar acima disso (m/s)
 const ROPE_SEGMENTS = 16;
 
 function fireGrapple() {
@@ -1896,10 +2237,20 @@ function updateGrapplePhysics(wish, dt) {
     releaseGrapple(true);
     return;
   }
-  // Recolhe a corda enquanto segura
-  grapple.length = Math.max(GRAPPLE_MIN_LENGTH, grapple.length - GRAPPLE_REEL_SPEED * dt);
+  const toAnchor = _tmp.copy(grapple.anchor).sub(camera.position);
+  const dist = toAnchor.length();
+  const ropeDir = toAnchor.divideScalar(dist || 1);
+  // Recolhe a corda enquanto segura; ao chegar mais perto ela trava nessa
+  // distância (não fica frouxa de novo), até o comprimento mínimo
+  grapple.length = Math.max(GRAPPLE_MIN_LENGTH, Math.min(grapple.length - GRAPPLE_REEL_SPEED * dt, dist));
+  // Puxão suave em direção ao ponto, limitado a uma velocidade confortável
+  if (dist > GRAPPLE_MIN_LENGTH + 0.3) {
+    const radial = velocity.dot(ropeDir);
+    if (radial < GRAPPLE_PULL_MAX_SPEED) {
+      velocity.addScaledVector(ropeDir, Math.min(GRAPPLE_PULL_ACCEL * dt, GRAPPLE_PULL_MAX_SPEED - radial));
+    }
+  }
   // Controle do balanço: empurra perpendicular à corda
-  const ropeDir = _tmp.copy(grapple.anchor).sub(camera.position).normalize();
   const push = wish.clone().addScaledVector(ropeDir, -wish.dot(ropeDir));
   velocity.addScaledVector(push, GRAPPLE_SWING_ACCEL * dt);
   // Pouco arrasto do ar para o pêndulo não crescer infinitamente
@@ -1956,6 +2307,37 @@ const _right = new THREE.Vector3();
 const _up = new THREE.Vector3();
 const _normal = new THREE.Vector3();
 const _muzzle = new THREE.Vector3();
+
+// -----------------------------------------------------------------------------
+// FEEDBACK DE ACERTO PREVISTO
+// -----------------------------------------------------------------------------
+// O acerto é detectado aqui no cliente; o servidor só confirma o dano. Mostrar
+// hitmarker/som/flash na hora esconde o ping (≈200ms num servidor distante).
+// Quando a confirmação chega, só o número de dano é desenhado.
+const HIT_PREDICTION_WINDOW = 1000; // ms para casar previsão e confirmação
+const predictedHits = new Map();    // id do alvo -> horário do último acerto previsto
+
+function predictHitFeedback(hits) {
+  if (hits.length === 0) return;
+  const now = performance.now();
+  const headshot = hits.some((h) => h.head);
+  for (const h of hits) {
+    const rp = remotePlayers[h.id];
+    if (!rp || !rp.data.alive) continue;
+    if (!predictedHits.has(h.id) || predictedHits.get(h.id) < now) flashPlayerRed(rp);
+    predictedHits.set(h.id, now);
+  }
+  showHitmarker(headshot, false);
+  playHitmarkerSound(headshot);
+}
+
+// true se o feedback deste acerto já foi mostrado (e consome a previsão)
+function consumePredictedHit(targetId) {
+  const at = predictedHits.get(targetId);
+  if (at === undefined) return false;
+  predictedHits.delete(targetId);
+  return performance.now() - at < HIT_PREDICTION_WINDOW;
+}
 
 // Dispersão atual em radianos (movimento e pulo atrapalham a mira do quadril)
 function currentSpread() {
@@ -2041,9 +2423,11 @@ function doShoot(w) {
     let end;
     if (playerHit && (!wallHit || playerHit.distance < wallHit.distance)) {
       end = playerHit.point;
-      hits.push({ id: meshToId.get(playerHit.object), head: !!playerHit.object.userData.isHead });
-      // Faca: espirra sangue na hora, sem esperar o servidor
-      if (w.isMelee) spawnBloodHit(end, !!playerHit.object.userData.isHead);
+      const hitId = meshToId.get(playerHit.object);
+      const head = !!playerHit.object.userData.isHead;
+      // Sangue na hora, sem esperar o servidor (um jato por alvo na escopeta)
+      if (!hits.some((h) => h.id === hitId)) spawnBloodHit(end, head);
+      hits.push({ id: hitId, head });
     } else if (wallHit) {
       end = wallHit.point;
       meleeHitWall = w.isMelee;
@@ -2059,6 +2443,7 @@ function doShoot(w) {
   }
 
   socket.emit('shoot', { hits, ends });
+  predictHitFeedback(hits);
 
   if (myAmmo[key] !== undefined && myAmmo[key] !== -1) {
     myAmmo[key] = Math.max(myAmmo[key] - 1, 0);
@@ -2108,8 +2493,10 @@ function updateAutoFire() {
 // =============================================================================
 let hudTick = 0;
 
-function animate() {
+function animate(now) {
   requestAnimationFrame(animate);
+  if (!shouldRenderFrame(now)) return;
+  updateFpsCounter(now);
   const dt = Math.min(clock.getDelta(), 0.05);
 
   if (joined && myAlive && gameStatus === 'playing' && controls.isLocked) {
@@ -2165,7 +2552,7 @@ function angleLerp(a, b, t) {
 // Interpolação por snapshots: renderiza os outros jogadores ~100ms no passado,
 // sempre entre duas posições reais recebidas do servidor.
 function updateRemotePlayers(dt) {
-  const renderTime = serverTimeOffset === null ? 0 : performance.now() + serverTimeOffset - INTERP_DELAY;
+  const renderTime = serverTimeOffset === null ? 0 : performance.now() + serverTimeOffset - net.interpDelay;
 
   for (const id in remotePlayers) {
     const rp = remotePlayers[id];

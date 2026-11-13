@@ -13,6 +13,9 @@ const server = http.createServer(app);
 const io = new Server(server, {
   // Aceita WebSocket para baixa latência e HTTP polling como alternativa.
   transports: ['websocket', 'polling'],
+  // Sem compressão: mensagens pequenas e frequentes chegam mais rápido sem ela
+  perMessageDeflate: false,
+  httpCompression: false,
 });
 const PORT = process.env.PORT || 3000;
 app.use(express.static(path.join(__dirname, 'public')));
@@ -162,7 +165,12 @@ const END_SCREEN_DURATION = 6;
 const RESPAWN_DELAY = 5000;
 const REGEN_DELAY_MS = 15000; // 15 segundos sem tomar dano para regenerar vida
 const REGEN_PER_SECOND = 10;
-const STATE_RATE_MS = 50; // 20Hz
+// Taxas de rede (Hz). Em hospedagem com CPU fraca (ex.: plano gratuito do
+// Render) dá para baixar com as variáveis de ambiente STATE_HZ / MOVE_HZ.
+const clampHz = (v, def) => Math.max(10, Math.min(60, Number(v) || def));
+const STATE_HZ = clampHz(process.env.STATE_HZ, 60); // snapshots servidor -> clientes
+const MOVE_HZ = clampHz(process.env.MOVE_HZ, 60);   // posição cliente -> servidor
+const STATE_RATE_MS = 1000 / STATE_HZ; // o cliente se adapta ao intervalo real
 
 const game = {
   status: 'waiting', // 'waiting' | 'playing' | 'ended' | 'voting'
@@ -404,9 +412,9 @@ setInterval(() => {
   }
 }, 1000);
 
-// Snapshot compacto de posições (20Hz):
+// Snapshot compacto de posições (STATE_HZ):
 // [id, x, y, z, rotY, alive(0/1), weaponKey, health, pitch, crouch(0..1), grappling(0/1)]
-setInterval(() => {
+function sendSnapshot() {
   if (game.status !== 'playing') return;
   const list = [];
   for (const id in players) {
@@ -417,12 +425,29 @@ setInterval(() => {
     ]);
   }
   if (list.length > 0) io.volatile.emit('state', { t: Date.now(), p: list });
-}, STATE_RATE_MS);
+}
+
+// setInterval atrasa no Windows (timer de ~15ms); este laço mira o próximo
+// horário exato e compensa o atraso, mantendo a média em 60Hz.
+let nextSnapshotAt = performance.now();
+function snapshotLoop() {
+  sendSnapshot();
+  const now = performance.now();
+  nextSnapshotAt += STATE_RATE_MS;
+  if (nextSnapshotAt < now - 100) nextSnapshotAt = now; // servidor ficou travado: recomeça
+  setTimeout(snapshotLoop, Math.max(0, nextSnapshotAt - now));
+}
+snapshotLoop();
 
 // ---------------------------------------------------------------------------
 // SOCKET.IO
 // ---------------------------------------------------------------------------
 io.on('connection', (socket) => {
+  // Medição de ping: o cliente manda a hora dele e mede quando a resposta volta
+  socket.on('latency', (sentAt, ack) => {
+    if (typeof ack === 'function') ack(sentAt);
+  });
+
   socket.emit('gameInfo', {
     status: game.status,
     currentMap: game.currentMap,
@@ -463,6 +488,7 @@ io.on('connection', (socket) => {
       players: others,
       seq: p.spawnSeq,
       ammo: p.ammo, // munição é privada: só vai para o próprio jogador
+      net: { moveHz: MOVE_HZ },
       game: { status: game.status, currentMap: game.currentMap, mapName: MAPS[game.currentMap].name, timeLeft: game.timeLeft },
     });
     socket.broadcast.emit('playerJoined', publicPlayer(p));
@@ -648,7 +674,7 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
+  console.log(`Servidor rodando na porta ${PORT} (snapshots ${STATE_HZ}Hz, movimento ${MOVE_HZ}Hz)`);
   console.log(`Para jogar na mesma rede: ${LAN_URL}`);
   for (const mapId of MAP_IDS) {
     console.log(`[spawn] ${mapId}: ${VALID_SPAWNS[mapId].length}/${MAPS[mapId].spawns.length} spawns válidos`);

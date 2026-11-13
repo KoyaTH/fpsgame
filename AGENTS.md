@@ -44,6 +44,22 @@ The following data must stay in sync between `server.js` and the client:
   startup (`lib/mapObstacles.js`) to get the same AABBs and moves any spawn
   that falls inside an obstacle to the nearest clear point — no generated
   file to keep in sync. `maps.js` may only use the THREE subset shimmed there.
+  On the client, `loadMap` merges static map meshes that share a material into
+  one batch (`batchStaticMeshes` in `game.js`); originals leave the scene but
+  stay in `obstacles` for collision/raycast. Mark a mesh that animates with
+  `userData.noBatch = true`.
+- **Network timing**: the server sends `state` snapshots at 60Hz from a
+  drift-corrected loop (`snapshotLoop`); clients send `move` at 60Hz. The
+  client measures the real snapshot interval/jitter and adapts its
+  interpolation delay (`net.interpDelay`, 40–150 ms), so changing the server
+  rate needs no client change. Ping uses the `latency` event with an ack.
+  Rates come from env vars `STATE_HZ` / `MOVE_HZ` (10–60, default 60); the
+  move rate reaches the client in `init.net.moveHz`. The shooter's hitmarker,
+  hit sound and blood are shown locally on fire (`predictHitFeedback`);
+  `playerDamaged` then only adds the damage number for that hit.
+- **Graphics settings**: `userSettings.graphics` (presets in `GFX_PRESETS`,
+  applied by `applyGraphicsSettings`). Anti-aliasing recreates the renderer;
+  effects quality lives in `effects.js` (`setEffectsQuality`).
 - **Eye height**: `EYE_HEIGHT` in `server.js` must match `PLAYER_HEIGHT` in
   `public/game.js`.
 - **Respawn sequence**: every spawn bumps `spawnSeq`; the client sends it with

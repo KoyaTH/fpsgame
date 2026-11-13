@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css?v=16" />
+<link rel="stylesheet" href="style.css?v=20" />
 </head>
 <body>
 
@@ -31,7 +31,7 @@
         </div>
 
         <button id="joinBtn" class="primaryBtn big" disabled>Entrar na partida</button>
-        <button id="openSettingsLobbyBtn" type="button" class="ghostBtn">⚙️ Sensibilidade e teclas</button>
+        <button id="openSettingsLobbyBtn" type="button" class="ghostBtn">⚙️ Configurações e gráficos</button>
 
         <div id="inviteBox" class="inviteBox">
           <span>Convide jogadores na mesma rede</span>
@@ -63,6 +63,7 @@
   <div id="lowHealthVignette"></div>
   <div id="speedLines"></div>
   <div id="damageIndicatorWrap"></div>
+  <div id="fpsCounter" class="hidden"></div>
 
   <div id="sniperScope" class="hidden">
     <div class="scopeCenter">
@@ -181,8 +182,82 @@
     </div>
 
     <div class="settingsTabs">
-      <button id="tabMouseBtn" class="tabBtn active" type="button">🎯 Mouse e vídeo</button>
-      <button id="tabKeysBtn" class="tabBtn" type="button">⌨️ Teclas</button>
+      <button id="tabMouseBtn" class="tabBtn active" type="button" data-tab="tabMouseContent">🎯 Mouse e mira</button>
+      <button id="tabGfxBtn" class="tabBtn" type="button" data-tab="tabGfxContent">🖥️ Gráficos</button>
+      <button id="tabKeysBtn" class="tabBtn" type="button" data-tab="tabKeysContent">⌨️ Teclas</button>
+    </div>
+
+    <div id="tabGfxContent" class="tabContent hidden">
+      <div class="settingsSection">
+        <h3>Qualidade geral</h3>
+        <div class="gfxPresets" id="gfxPresets">
+          <button type="button" class="gfxPresetBtn" data-preset="baixo">Baixo</button>
+          <button type="button" class="gfxPresetBtn" data-preset="medio">Médio</button>
+          <button type="button" class="gfxPresetBtn" data-preset="alto">Alto</button>
+          <button type="button" class="gfxPresetBtn" data-preset="ultra">Ultra</button>
+        </div>
+        <p class="gfxHint" id="gfxPresetHint">Escolha um preset ou ajuste cada opção abaixo.</p>
+      </div>
+
+      <div class="settingsSection">
+        <h3>Imagem</h3>
+        <div class="settingRow">
+          <label for="gfxResRange">Resolução de renderização</label>
+          <div class="rangeWrap">
+            <input type="range" id="gfxResRange" min="50" max="100" step="5" value="100" />
+            <span class="gfxValue" id="gfxResValue">100%</span>
+          </div>
+        </div>
+        <div class="settingRow">
+          <label for="gfxShadowSelect">Sombras</label>
+          <select id="gfxShadowSelect" class="gfxSelect">
+            <option value="off">Desligadas</option>
+            <option value="baixa">Baixa</option>
+            <option value="media">Média</option>
+            <option value="alta">Alta (suaves)</option>
+          </select>
+        </div>
+        <div class="settingRow">
+          <label for="gfxTexSelect">Texturas (filtragem)</label>
+          <select id="gfxTexSelect" class="gfxSelect">
+            <option value="baixa">Baixa</option>
+            <option value="media">Média</option>
+            <option value="alta">Alta</option>
+          </select>
+        </div>
+        <div class="settingRow">
+          <label for="gfxFxSelect">Efeitos (partículas, marcas, luz do tiro)</label>
+          <select id="gfxFxSelect" class="gfxSelect">
+            <option value="baixo">Baixo</option>
+            <option value="medio">Médio</option>
+            <option value="alto">Alto</option>
+          </select>
+        </div>
+        <label class="checkboxLabel"><input type="checkbox" id="gfxAACheck" /><span>Anti-aliasing (suaviza bordas, pesa em placas fracas)</span></label>
+      </div>
+
+      <div class="settingsSection">
+        <h3>Desempenho e câmera</h3>
+        <div class="settingRow">
+          <label for="gfxFpsSelect">Limite de FPS</label>
+          <select id="gfxFpsSelect" class="gfxSelect">
+            <option value="0">Sem limite</option>
+            <option value="240">240</option>
+            <option value="144">144</option>
+            <option value="120">120</option>
+            <option value="60">60</option>
+            <option value="30">30</option>
+          </select>
+        </div>
+        <label class="checkboxLabel"><input type="checkbox" id="gfxShowFpsCheck" /><span>Mostrar contador de FPS</span></label>
+        <div class="settingRow">
+          <label for="fovRange">Campo de visão (FOV)</label>
+          <div class="rangeWrap">
+            <input type="range" id="fovRange" min="70" max="110" step="1" value="90" />
+            <input type="number" id="fovNum" min="70" max="110" step="1" value="90" />
+          </div>
+        </div>
+      </div>
     </div>
 
     <div id="tabMouseContent" class="tabContent">
@@ -220,19 +295,7 @@
             <input type="number" id="sensAimYNum" min="0.1" max="5.0" step="0.05" value="0.75" />
           </div>
         </div>
-      </div>
-
-      <div class="settingsSection">
-        <h3>Vídeo</h3>
-        <div class="settingRow">
-          <label for="fovRange">Campo de visão (FOV)</label>
-          <div class="rangeWrap">
-            <input type="range" id="fovRange" min="70" max="110" step="1" value="90" />
-            <input type="number" id="fovNum" min="70" max="110" step="1" value="90" />
-          </div>
-        </div>
         <label class="checkboxLabel"><input type="checkbox" id="invertYCheck" /><span>Inverter eixo Y</span></label>
-        <label class="checkboxLabel"><input type="checkbox" id="shadowsCheck" checked /><span>Sombras (desligue se o jogo estiver lento)</span></label>
       </div>
 
       <div class="settingsSection">
@@ -318,13 +381,13 @@
 <script src="/socket.io/socket.io.min.js"></script>
 <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
 <!-- O parâmetro de versão impede que o navegador mantenha uma versão antiga do jogo em cache. -->
-<script src="constants.js?v=16"></script>
-<script src="maps.js?v=16"></script>
-<script src="textures.js?v=16"></script>
-<script src="weapons.js?v=16"></script>
-<script src="audio.js?v=16"></script>
-<script src="effects.js?v=16"></script>
-<script src="ui.js?v=16"></script>
-<script src="game.js?v=16"></script>
+<script src="constants.js?v=20"></script>
+<script src="maps.js?v=20"></script>
+<script src="textures.js?v=20"></script>
+<script src="weapons.js?v=20"></script>
+<script src="audio.js?v=20"></script>
+<script src="effects.js?v=20"></script>
+<script src="ui.js?v=20"></script>
+<script src="game.js?v=20"></script>
 </body>
 </html>

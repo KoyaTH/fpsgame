@@ -246,8 +246,27 @@ const SURFACE_PAINTERS = {
 };
 
 let maxAnisotropy = 1;
+let anisotropyCap = 8;     // limite da placa de vídeo
+let anisotropyWanted = 8;  // escolhido nas configurações de gráficos
 function setTextureAnisotropy(renderer) {
-  maxAnisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  anisotropyCap = renderer.capabilities.getMaxAnisotropy();
+  maxAnisotropy = Math.min(anisotropyWanted, anisotropyCap);
+}
+
+// Atualiza a filtragem das texturas já criadas (inclusive o chão do mapa atual)
+function setTextureQuality(anisotropy, root) {
+  anisotropyWanted = anisotropy;
+  const value = Math.min(anisotropy, anisotropyCap);
+  if (value === maxAnisotropy && root.userData.texAnisotropy === value) return;
+  maxAnisotropy = value;
+  root.userData.texAnisotropy = value;
+  const update = (tex) => {
+    if (!tex || tex.anisotropy === value) return;
+    tex.anisotropy = value;
+    tex.needsUpdate = true;
+  };
+  Object.values(surfaceTextureCache).forEach(update);
+  root.traverse((o) => { if (o.userData.isGround && o.material) update(o.material.map); });
 }
 
 function getSurfaceTexture(surface) {
