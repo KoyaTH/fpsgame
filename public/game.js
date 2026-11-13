@@ -15,6 +15,7 @@ nameTagsDiv.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:
 document.body.appendChild(nameTagsDiv);
 
 let myLoadout = [];
+let myCharacter = null; // customização do personagem (characterOptions.js)
 let myWeaponKey = null;
 let lastWeaponKey = null;
 let myAmmo = {};
@@ -516,9 +517,97 @@ function closeInGameLoadoutModal() {
 
 // Algum overlay que precisa do cursor livre está aberto?
 function isAnyModalOpen() {
-  return ['settingsModal', 'changeLoadoutModal', 'loadoutScreen', 'endScreen', 'voteScreen', 'deathScreen']
+  return ['settingsModal', 'changeLoadoutModal', 'characterModal', 'loadoutScreen', 'endScreen', 'voteScreen', 'deathScreen']
     .some((id) => !$(id).classList.contains('hidden'));
 }
+
+// =============================================================================
+// PERSONAGEM (CUSTOMIZAÇÃO COM PRÉVIA 3D)
+// =============================================================================
+function randomCharacter() {
+  const pick = (list) => Math.floor(Math.random() * list.length);
+  const o = CHARACTER_OPTIONS;
+  return {
+    suit: pick(o.suit), accent: pick(o.accent), skin: pick(o.skin), glow: pick(o.glow),
+    hat: o.hat[pick(o.hat)], face: o.face[pick(o.face)], back: o.back[pick(o.back)],
+  };
+}
+
+function loadCharacter() {
+  try {
+    const raw = localStorage.getItem('fps_game_character');
+    if (raw) return sanitizeCharacter(JSON.parse(raw));
+  } catch (e) { /* armazenamento indisponível */ }
+  // Primeira visita: cor de roupa aleatória para os jogadores não saírem iguais
+  return { ...DEFAULT_CHARACTER, suit: Math.floor(Math.random() * CHARACTER_OPTIONS.suit.length) };
+}
+
+function saveCharacter() {
+  try { localStorage.setItem('fps_game_character', JSON.stringify(myCharacter)); } catch (e) { /* armazenamento indisponível */ }
+}
+
+myCharacter = loadCharacter();
+saveCharacter();
+
+const characterUi = { preview: null, draft: null };
+
+function refreshCharacterEditor() {
+  renderCharacterOptions($('charOptions'), characterUi.draft, (key, value) => {
+    characterUi.draft[key] = value;
+    characterUi.preview.setCharacter(characterUi.draft);
+    refreshCharacterEditor();
+  });
+}
+
+function openCharacterModal() {
+  controls.unlock();
+  characterUi.draft = { ...myCharacter };
+  if (!characterUi.preview) {
+    characterUi.preview = createCharacterPreview($('charPreviewCanvas'));
+    const select = $('charWeaponSelect');
+    for (const key of [...WEAPON_CHOICES, 'knife']) {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = WEAPONS[key].name;
+      select.appendChild(opt);
+    }
+    select.addEventListener('change', () => characterUi.preview.setWeapon(select.value));
+    document.querySelectorAll('#charPoses button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#charPoses button').forEach((b) => b.classList.toggle('active', b === btn));
+        characterUi.preview.setPose(btn.dataset.pose);
+      });
+    });
+  }
+  const weapon = myLoadout[0] || lobbyPicker.get()[0] || 'rifle';
+  $('charWeaponSelect').value = weapon;
+  characterUi.preview.setWeapon(weapon);
+  characterUi.preview.setCharacter(characterUi.draft);
+  refreshCharacterEditor();
+  $('characterModal').classList.remove('hidden');
+  characterUi.preview.start();
+}
+
+function closeCharacterModal(save) {
+  if (characterUi.preview) characterUi.preview.stop();
+  $('characterModal').classList.add('hidden');
+  if (save && characterUi.draft) {
+    myCharacter = sanitizeCharacter(characterUi.draft);
+    saveCharacter();
+    if (joined && socket) socket.emit('changeCharacter', { character: myCharacter });
+  }
+  if (joined && gameStatus === 'playing' && myAlive && !isAnyModalOpen()) controls.lock();
+}
+
+$('openCharacterLobbyBtn').addEventListener('click', openCharacterModal);
+$('openCharacterHudBtn').addEventListener('click', openCharacterModal);
+$('closeCharacterXBtn').addEventListener('click', () => closeCharacterModal(false));
+$('saveCharacterBtn').addEventListener('click', () => closeCharacterModal(true));
+$('randomCharacterBtn').addEventListener('click', () => {
+  characterUi.draft = randomCharacter();
+  characterUi.preview.setCharacter(characterUi.draft);
+  refreshCharacterEditor();
+});
 
 $('joinBtn').addEventListener('click', () => {
   myLoadout = lobbyPicker.get();
@@ -605,6 +694,7 @@ function initThree() {
 // Libera geometrias/materiais da GPU (texturas de superfície são compartilhadas)
 function disposeObject(obj) {
   obj.traverse((child) => {
+    if (child.userData.shared) return; // geometria/material em cache (armas dos jogadores)
     if (child.geometry) child.geometry.dispose();
     if (child.material) {
       const mats = Array.isArray(child.material) ? child.material : [child.material];
@@ -1148,158 +1238,16 @@ function applyCameraRotation(dt) {
 }
 
 // =============================================================================
-// MODELO DOS OUTROS JOGADORES (com animação de passos, mira, agachar e pulo)
+// OUTROS JOGADORES (modelo, customização e animações ficam em character.js)
 // =============================================================================
-function colorFromId(id) {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = id.charCodeAt(i) + ((hash << 5) - hash);
-  return new THREE.Color(`hsl(${Math.abs(hash) % 360}, 70%, 50%)`);
-}
-
-function buildPlayerMesh(color) {
-  const group = new THREE.Group();
-  const materials = [];
-  const mat = (props) => {
-    const m = new THREE.MeshStandardMaterial(props);
-    m.userData.origColor = m.color.clone();
-    materials.push(m);
-    return m;
-  };
-  const suit = mat({ color, roughness: 0.7, metalness: 0.15 });
-  const armor = mat({ color: 0x1f242d, roughness: 0.55, metalness: 0.35 });
-  const skin = mat({ color: 0xd49a70, roughness: 0.9 });
-  const visor = mat({ color: 0x38bdf8, emissive: 0x0f4c6e, roughness: 0.2, metalness: 0.8 });
-  const boot = mat({ color: 0x111317, roughness: 0.8 });
-  const hitMeshes = [];
-
-  const box = (parent, w, h, d, material, x, y, z, isHead = false) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
-    m.position.set(x, y, z);
-    m.castShadow = true;
-    m.userData.isHead = isHead;
-    parent.add(m);
-    hitMeshes.push(m);
-    return m;
-  };
-
-  // Pernas com quadril e joelho articulados
-  const makeLeg = (x) => {
-    const hip = new THREE.Group();
-    hip.position.set(x, 0.92, 0);
-    box(hip, 0.25, 0.46, 0.27, suit, 0, -0.23, 0);
-    const knee = new THREE.Group();
-    knee.position.set(0, -0.46, 0);
-    box(knee, 0.23, 0.4, 0.25, suit, 0, -0.2, 0);
-    box(knee, 0.26, 0.12, 0.36, boot, 0, -0.4, -0.05);
-    hip.add(knee);
-    group.add(hip);
-    return { hip, knee };
-  };
-  const legL = makeLeg(-0.16);
-  const legR = makeLeg(0.16);
-
-  // Tronco (desce ao agachar e inclina com a mira)
-  const upper = new THREE.Group();
-  upper.position.set(0, 0.92, 0);
-  group.add(upper);
-  box(upper, 0.66, 0.72, 0.38, suit, 0, 0.38, 0);
-  box(upper, 0.72, 0.56, 0.44, armor, 0, 0.42, 0);
-  box(upper, 0.18, 0.2, 0.08, armor, -0.18, 0.3, -0.25);
-  box(upper, 0.18, 0.2, 0.08, armor, 0.18, 0.3, -0.25);
-
-  const head = new THREE.Group();
-  head.position.set(0, 0.82, 0);
-  upper.add(head);
-  box(head, 0.44, 0.44, 0.44, skin, 0, 0.22, 0, true);
-  box(head, 0.5, 0.22, 0.5, armor, 0, 0.4, 0, true);
-  box(head, 0.4, 0.13, 0.05, visor, 0, 0.26, -0.23, true);
-
-  // Braços apontando para frente segurando a arma
-  const makeArm = (x) => {
-    const shoulder = new THREE.Group();
-    shoulder.position.set(x, 0.66, 0);
-    box(shoulder, 0.2, 0.62, 0.2, suit, 0, -0.28, 0);
-    upper.add(shoulder);
-    return shoulder;
-  };
-  const armR = makeArm(0.42);
-  const armL = makeArm(-0.42);
-
-  const weaponSlot = new THREE.Group();
-  weaponSlot.position.set(0, -0.6, 0.02);
-  weaponSlot.rotation.x = -Math.PI / 2;
-  armR.add(weaponSlot);
-
-  const parts = { legL, legR, upper, head, armR, armL, weaponSlot, flash: null, weaponKey: null };
-
-  const setWeapon = (key) => {
-    if (parts.weaponKey === key) return;
-    parts.weaponKey = key;
-    while (weaponSlot.children.length) {
-      const c = weaponSlot.children[0];
-      weaponSlot.remove(c);
-      disposeObject(c);
-    }
-    const model = buildWeaponModel(key);
-    model.group.traverse((o) => { if (o.isMesh) o.castShadow = true; });
-    weaponSlot.add(model.group);
-    parts.flash = createMuzzleFlash(model.group, model.muzzle, 0.5);
-    parts.muzzle = model.muzzle;
-    parts.weaponGroup = model.group;
-  };
-
-  return { group, parts, hitMeshes, materials, setWeapon };
-}
-
-// Pose do modelo remoto a cada frame
-function animateRemote(rp, dt, speed, vy) {
-  const { parts } = rp;
-  const a = rp.anim;
-  const crouch = a.crouch;
-  const airborne = Math.abs(vy) > 1.2;
-
-  a.stride += dt * Math.min(speed, 14) * 1.25;
-  const walk = Math.min(speed / 6, 1) * (airborne ? 0.2 : 1);
-  const swing = Math.sin(a.stride) * 0.75 * walk;
-
-  const tuck = airborne ? 0.6 : 0;
-  parts.legL.hip.rotation.x = THREE.MathUtils.damp(parts.legL.hip.rotation.x, swing - crouch * 1.1 - tuck, 14, dt);
-  parts.legR.hip.rotation.x = THREE.MathUtils.damp(parts.legR.hip.rotation.x, -swing - crouch * 1.1 - tuck * 0.5, 14, dt);
-  parts.legL.knee.rotation.x = THREE.MathUtils.damp(parts.legL.knee.rotation.x, Math.max(0, -Math.sin(a.stride)) * 0.9 * walk + crouch * 1.9 + tuck, 14, dt);
-  parts.legR.knee.rotation.x = THREE.MathUtils.damp(parts.legR.knee.rotation.x, Math.max(0, Math.sin(a.stride)) * 0.9 * walk + crouch * 1.9 + tuck * 0.8, 14, dt);
-
-  parts.upper.position.y = 0.92 - crouch * 0.42 + Math.abs(Math.cos(a.stride)) * 0.04 * walk;
-  parts.upper.rotation.x = a.pitch * 0.25 - crouch * 0.15;
-  parts.head.rotation.x = a.pitch * 0.7;
-
-  const knife = parts.weaponKey === 'knife';
-  const aimX = Math.PI / 2 + a.pitch * 0.85 - (knife ? 0.9 : 0);
-  parts.armR.rotation.set(aimX, 0, 0);
-  parts.armL.rotation.set(aimX - (knife ? 0.3 : 0.05), 0, knife ? 0.2 : -0.55);
-  parts.upper.rotation.y = 0;
-
-  // Golpe de faca: ergue o braço de um lado e corta em arco para o outro,
-  // girando o tronco junto (alterna o lado a cada golpe)
-  if (knife && a.swingT < 1) {
-    a.swingT = Math.min(a.swingT + dt / 0.38, 1);
-    const p = a.swingT;
-    let side;
-    if (p < 0.25) side = easeInOut(p / 0.25);                         // preparação
-    else if (p < 0.55) side = 1 - 2 * easeOutCubic((p - 0.25) / 0.3); // corte
-    else side = -1 + easeInOut((p - 0.55) / 0.45);                    // volta
-    const lift = Math.sin(Math.min(p / 0.55, 1) * Math.PI) * 0.9;
-    parts.armR.rotation.set(aimX + 0.9 * (p < 0.55 ? 1 : 1 - easeInOut((p - 0.55) / 0.45)) - lift * 0.3, 0, side * 1.1 * a.swingDir);
-    parts.upper.rotation.y = -side * 0.35 * a.swingDir;
-  }
-  // Recuo ao atirar
-  a.recoil = THREE.MathUtils.damp(a.recoil, 0, 14, dt);
-  parts.armR.rotation.x += a.recoil;
-  parts.armL.rotation.x += a.recoil * 0.6;
-}
+const _frustum = new THREE.Frustum();
+const _frustumMat = new THREE.Matrix4();
+const _rpSphere = new THREE.Sphere(new THREE.Vector3(), 1.3);
+const ANIM_FAR_DISTANCE = 45; // além disso a pose atualiza em meio ritmo
 
 function addRemotePlayer(p) {
   if (remotePlayers[p.id]) return remotePlayers[p.id];
-  const pm = buildPlayerMesh(colorFromId(p.id));
+  const pm = buildCharacter(p.character);
   const feetY = (p.y || PLAYER_HEIGHT) - PLAYER_HEIGHT;
   pm.group.position.set(p.x || 0, feetY, p.z || 0);
   pm.group.rotation.y = p.rotY || 0;
@@ -1327,7 +1275,7 @@ function addRemotePlayer(p) {
     id: p.id,
     buffer: [], // snapshots { t, x, y, z, rotY, pitch, crouch } para interpolação
     data: { id: p.id, name: p.name || 'Jogador', health: p.health ?? 100, alive: !!p.alive, weaponKey: p.weaponKey || 'smg' },
-    anim: { stride: 0, crouch: 0, pitch: 0, recoil: 0, lastY: feetY, swingT: 1, swingDir: 1 },
+    animAcc: 0, // tempo acumulado quando a pose atualiza em meio ritmo (longe)
     flashTimeout: null,
     tag, tagName, healthFill,
     losVisible: true,
@@ -1335,8 +1283,26 @@ function addRemotePlayer(p) {
     grappleAnchor: null,
     rope: null,
   };
+  rp.anim.lastY = feetY;
   remotePlayers[p.id] = rp;
   return rp;
+}
+
+// Troca a customização de um jogador: monta o modelo novo no lugar do antigo,
+// mantendo posição, arma e o estado das animações
+function rebuildRemoteCharacter(rp, character) {
+  const old = rp.group;
+  const pm = buildCharacter(character);
+  pm.anim = Object.assign(rp.anim, { drawT: 1 });
+  pm.group.position.copy(old.position);
+  pm.group.rotation.y = old.rotation.y;
+  pm.group.visible = old.visible;
+  pm.setWeapon(rp.data.weaponKey || 'smg');
+  pm.anim.drawT = 1;
+  scene.remove(old);
+  disposeObject(old);
+  scene.add(pm.group);
+  Object.assign(rp, { group: pm.group, parts: pm.parts, anim: pm.anim, hitMeshes: pm.hitMeshes, materials: pm.materials, setWeapon: pm.setWeapon, character: pm.character });
 }
 
 function removeRemoteRope(rp) {
@@ -1366,11 +1332,10 @@ function clearRemotePlayers() {
 
 function flashPlayerRed(rp) {
   rp.materials.forEach((m) => { m.emissive.setHex(0xff1122); m.emissiveIntensity = 0.9; });
+  characterOnHit(rp);
   clearTimeout(rp.flashTimeout);
   rp.flashTimeout = setTimeout(() => {
     rp.materials.forEach((m) => { m.emissive.setHex(0x000000); });
-    // o visor tem brilho próprio
-    rp.materials[3].emissive.setHex(0x0f4c6e);
   }, 110);
 }
 
@@ -1423,7 +1388,7 @@ function connectSocket() {
     startPingLoop();
     socket.io.engine.on('upgrade', updateNetworkStatus);
     // Entra (ou entra de novo após uma queda de conexão)
-    socket.emit('join', { name: myName, loadout: myLoadout });
+    socket.emit('join', { name: myName, loadout: myLoadout, character: myCharacter });
   });
   socket.on('disconnect', () => {
     stopPingLoop();
@@ -1471,6 +1436,17 @@ function connectSocket() {
   });
 
   socket.on('playerLeft', (id) => removeRemotePlayer(id));
+
+  socket.on('playerCharacter', ({ id, character }) => {
+    if (id === myId) return;
+    const rp = remotePlayers[id];
+    if (rp) rebuildRemoteCharacter(rp, character);
+  });
+
+  socket.on('playerReload', ({ id, duration }) => {
+    const rp = remotePlayers[id];
+    if (rp && rp.group.visible) characterOnReload(rp, duration);
+  });
 
   socket.on('scoreboard', (rows) => {
     lastScoreboard = rows;
@@ -1546,12 +1522,7 @@ function connectSocket() {
     const w = WEAPONS[weaponKey] || WEAPONS.smg;
     const from = getRemoteMuzzlePos(rp, new THREE.Vector3());
     if (!w.isMelee) triggerMuzzleFlash(rp.parts.flash, 0.06, 0.6);
-    if (w.isMelee) {
-      rp.anim.swingT = 0;
-      rp.anim.swingDir = -rp.anim.swingDir;
-    } else {
-      rp.anim.recoil = 0.25;
-    }
+    characterOnShot(rp, !!w.isMelee);
     const pellets = ends && ends.length ? ends : [];
     for (const e of pellets) {
       const to = new THREE.Vector3(e.x, e.y, e.z);
@@ -1584,7 +1555,7 @@ function connectSocket() {
       rp.data.health = health;
       if (!predicted) {
         flashPlayerRed(rp);
-        const chest = rp.group.position.clone().add(new THREE.Vector3(0, headshot ? 1.9 : 1.3, 0));
+        const chest = rp.group.position.clone().add(new THREE.Vector3(0, headshot ? 1.7 : 1.25, 0));
         spawnBloodHit(chest, headshot);
       }
     }
@@ -1593,7 +1564,7 @@ function connectSocket() {
         showHitmarker(!!headshot, false);
         playHitmarkerSound(!!headshot);
       }
-      const pos = worldToScreen(rp.group.position.clone().add(new THREE.Vector3(0, 2.3, 0)));
+      const pos = worldToScreen(rp.group.position.clone().add(new THREE.Vector3(0, CHAR_HEAD_TOP + 0.15, 0)));
       if (pos) showDamageNumber(pos.x, pos.y, damage, !!headshot, false);
     }
   });
@@ -1637,7 +1608,7 @@ function connectSocket() {
       predictedHits.delete(id);
       showHitmarker(!!headshot, true);
       if (rp) {
-        const pos = worldToScreen(rp.group.position.clone().add(new THREE.Vector3(0, 2.3, 0)));
+        const pos = worldToScreen(rp.group.position.clone().add(new THREE.Vector3(0, CHAR_HEAD_TOP + 0.15, 0)));
         if (pos) showDamageNumber(pos.x, pos.y, damage, !!headshot, true);
       }
       showKillBanner(rp ? rp.data.name : 'Jogador', !!headshot);
@@ -1855,6 +1826,10 @@ document.addEventListener('keydown', (e) => {
   }
   if (!$('changeLoadoutModal').classList.contains('hidden')) {
     if (e.code === 'Escape') closeInGameLoadoutModal();
+    return;
+  }
+  if (!$('characterModal').classList.contains('hidden')) {
+    if (e.code === 'Escape') closeCharacterModal(false);
     return;
   }
 
@@ -2552,6 +2527,9 @@ function angleLerp(a, b, t) {
 // Interpolação por snapshots: renderiza os outros jogadores ~100ms no passado,
 // sempre entre duas posições reais recebidas do servidor.
 function updateRemotePlayers(dt) {
+  camera.updateMatrixWorld();
+  _frustumMat.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  _frustum.setFromProjectionMatrix(_frustumMat);
   const renderTime = serverTimeOffset === null ? 0 : performance.now() + serverTimeOffset - net.interpDelay;
 
   for (const id in remotePlayers) {
@@ -2579,12 +2557,10 @@ function updateRemotePlayers(dt) {
     }
 
     const safeDt = Math.max(dt, 0.001);
-    const speed = Math.hypot(rp.group.position.x - prevX, rp.group.position.z - prevZ) / safeDt;
+    const vx = (rp.group.position.x - prevX) / safeDt;
+    const vz = (rp.group.position.z - prevZ) / safeDt;
     const vy = (rp.group.position.y - rp.anim.lastY) / safeDt;
     rp.anim.lastY = rp.group.position.y;
-    rp.anim.pitch = pitch;
-    rp.anim.crouch = crouch;
-    animateRemote(rp, dt, speed, vy);
 
     // Corda do gancho dos outros jogadores
     if (rp.rope && rp.grappleAnchor) {
@@ -2594,6 +2570,31 @@ function updateRemotePlayers(dt) {
       arr[3] = rp.grappleAnchor.x; arr[4] = rp.grappleAnchor.y; arr[5] = rp.grappleAnchor.z;
       rp.rope.geometry.attributes.position.needsUpdate = true;
     }
+
+    // Fora da tela não anima; longe anima em meio ritmo (pose barata de manter)
+    _rpSphere.center.copy(rp.group.position);
+    _rpSphere.center.y += 0.95;
+    if (!_frustum.intersectsSphere(_rpSphere)) { rp.animAcc = 0; continue; }
+    rp.animAcc += dt;
+    const far = camera.position.distanceToSquared(rp.group.position) > ANIM_FAR_DISTANCE * ANIM_FAR_DISTANCE;
+    if (far && rp.animAcc < 1 / 30) continue;
+    const animDt = Math.min(rp.animAcc, 0.1);
+    rp.animAcc = 0;
+
+    // Velocidade no referencial do jogador (frente = -Z girado pelo yaw)
+    const yaw = rp.group.rotation.y;
+    const sinY = Math.sin(yaw);
+    const cosY = Math.cos(yaw);
+    animateCharacter(rp, animDt, {
+      speed: Math.hypot(vx, vz),
+      fwd: -vx * sinY - vz * cosY,
+      side: vx * cosY - vz * sinY,
+      vy,
+      pitch,
+      crouch,
+      grappling: !!rp.grappleAnchor,
+    });
+
   }
 }
 
@@ -2616,7 +2617,7 @@ function updateNameTags() {
 
     if (show) {
       _headPos.copy(rp.group.position);
-      _headPos.y += 2.35 - rp.anim.crouch * 0.42;
+      _headPos.y += CHAR_HEAD_TOP + 0.3 - rp.anim.crouch * 0.5;
       _toPlayer.copy(_headPos).sub(camera.position);
       const dist = _toPlayer.length();
       _toPlayer.divideScalar(dist || 1);

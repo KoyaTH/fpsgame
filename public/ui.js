@@ -366,3 +366,45 @@ function hideDeathScreen() {
   stopDeathCountdown();
   $('deathScreen').classList.add('hidden');
 }
+
+// -----------------------------------------------------------------------------
+// CUSTOMIZAÇÃO DO PERSONAGEM
+// -----------------------------------------------------------------------------
+// Monta as seções de cores (paletas) e de acessórios; onChange(chave, valor)
+function renderCharacterOptions(container, character, onChange) {
+  container.innerHTML = '';
+  const hex = (n) => `#${n.toString(16).padStart(6, '0')}`;
+  const section = (key) => {
+    const el = document.createElement('div');
+    el.className = 'charSection';
+    el.innerHTML = `<h4>${escapeHtml(CHARACTER_LABELS[key])}</h4>`;
+    container.appendChild(el);
+    return el;
+  };
+  for (const key of ['suit', 'accent', 'skin', 'glow']) {
+    const row = document.createElement('div');
+    row.className = 'charSwatches';
+    CHARACTER_OPTIONS[key].forEach((color, i) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `charSwatch${character[key] === i ? ' active' : ''}`;
+      btn.style.background = hex(color);
+      btn.addEventListener('click', () => onChange(key, i));
+      row.appendChild(btn);
+    });
+    section(key).appendChild(row);
+  }
+  for (const key of ['hat', 'face', 'back']) {
+    const row = document.createElement('div');
+    row.className = 'charChips';
+    for (const value of CHARACTER_OPTIONS[key]) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `charChip${character[key] === value ? ' active' : ''}`;
+      btn.textContent = CHARACTER_LABELS.values[value] || value;
+      btn.addEventListener('click', () => onChange(key, value));
+      row.appendChild(btn);
+    }
+    section(key).appendChild(row);
+  }
+}

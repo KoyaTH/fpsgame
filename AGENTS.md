@@ -14,6 +14,11 @@ JavaScript (no bundler):
 - `public/textures.js` procedural canvas textures (`userData.surface`) and sky.
 - `public/weapons.js` 3D weapon models plus rendered preview images of weapons
   and maps (loadout cards, hotbar, killfeed, vote screen).
+- `public/characterOptions.js` customization palettes/options, defaults and
+  `sanitizeCharacter`; shared: loaded as a script and `require`d by the server.
+- `public/character.js` third-person player model (merged vertex-colored
+  segments, cached one-mesh weapons), two-bone arm IK onto each weapon's grip
+  and support points, all remote animations and the customization 3D preview.
 - `public/audio.js` synthesized sounds; `public/effects.js` pooled particles,
   decals, tracers, muzzle flashes and corpses.
 - `public/ui.js` DOM-only HUD/menus; `public/game.js` rendering, movement
@@ -36,6 +41,12 @@ The following data must stay in sync between `server.js` and the client:
   (spread, recoil, ADS FOV, moveSpeed, stats). Adding a weapon requires both
   files, `LOADOUT_CHOICES` (server) / `WEAPON_CHOICES` (client), a model case in
   `buildWeaponModel` and a sound profile in `SHOT_PROFILES`.
+- **Character**: `join` sends `character`; `changeCharacter` (throttled to 1/s)
+  is rebroadcast as `playerCharacter`; `publicPlayer` includes `character`.
+  New options go in `characterOptions.js` plus a case in `character.js`
+  (`headBoxes`/`torsoBoxes`). Reloads are rebroadcast as `playerReload`
+  `{ id, weaponKey, duration }` so others see the animation. Hold poses per
+  weapon class live in `HOLD_POSES`; a new weapon may need a `WEAPON_GRIPS` entry.
 - **Shots**: `shoot` sends `{ hits: [{ id, head }], ends: [{ x, y, z }] }`,
   one entry per pellet (max `pellets`); the server sums damage per target.
 - **Maps** (`MAPS`): `server.js` defines spawn points; `public/maps.js` builds

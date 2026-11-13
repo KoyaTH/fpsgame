@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css?v=20" />
+<link rel="stylesheet" href="style.css?v=21" />
 </head>
 <body>
 
@@ -31,6 +31,7 @@
         </div>
 
         <button id="joinBtn" class="primaryBtn big" disabled>Entrar na partida</button>
+        <button id="openCharacterLobbyBtn" type="button" class="ghostBtn">👕 Personalizar personagem</button>
         <button id="openSettingsLobbyBtn" type="button" class="ghostBtn">⚙️ Configurações e gráficos</button>
 
         <div id="inviteBox" class="inviteBox">
@@ -82,6 +83,7 @@
 
   <div id="hudButtons">
     <button id="openLoadoutHudBtn" type="button" title="Trocar armas (B)">🎒 Armas</button>
+    <button id="openCharacterHudBtn" type="button" title="Personagem">👕</button>
     <button id="openSettingsHudBtn" type="button" title="Configurações">⚙️</button>
   </div>
 
@@ -169,6 +171,38 @@
     <div class="settingsFooter">
       <button id="cancelLoadoutBtn" class="secondaryBtn" type="button">Cancelar</button>
       <button id="confirmLoadoutBtn" class="primaryBtn" type="button" disabled>Confirmar e equipar</button>
+    </div>
+  </div>
+</div>
+
+<!-- TELA DE PERSONAGEM -->
+<div id="characterModal" class="overlay hidden">
+  <div class="panel characterPanel">
+    <div class="settingsHeader">
+      <h2>👕 Personagem</h2>
+      <button id="closeCharacterXBtn" class="closeIconBtn" type="button">✕</button>
+    </div>
+    <div class="characterBody">
+      <div class="charPreviewCol">
+        <canvas id="charPreviewCanvas"></canvas>
+        <div class="charPoses" id="charPoses">
+          <button type="button" data-pose="parado" class="active">Parado</button>
+          <button type="button" data-pose="correndo">Correndo</button>
+          <button type="button" data-pose="agachado">Agachado</button>
+          <button type="button" data-pose="atirando">Atirando</button>
+          <button type="button" data-pose="recarregando">Recarga</button>
+        </div>
+        <div class="charPreviewRow">
+          <label for="charWeaponSelect">Arma na prévia</label>
+          <select id="charWeaponSelect" class="gfxSelect"></select>
+        </div>
+        <p class="hint">Arraste a prévia para girar</p>
+      </div>
+      <div class="charOptionsCol" id="charOptions"></div>
+    </div>
+    <div class="settingsFooter">
+      <button id="randomCharacterBtn" class="secondaryBtn" type="button">🎲 Aleatório</button>
+      <button id="saveCharacterBtn" class="primaryBtn" type="button">Salvar personagem</button>
     </div>
   </div>
 </div>
@@ -381,13 +415,15 @@
 <script src="/socket.io/socket.io.min.js"></script>
 <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
 <!-- O parâmetro de versão impede que o navegador mantenha uma versão antiga do jogo em cache. -->
-<script src="constants.js?v=20"></script>
-<script src="maps.js?v=20"></script>
-<script src="textures.js?v=20"></script>
-<script src="weapons.js?v=20"></script>
-<script src="audio.js?v=20"></script>
-<script src="effects.js?v=20"></script>
-<script src="ui.js?v=20"></script>
-<script src="game.js?v=20"></script>
+<script src="constants.js?v=21"></script>
+<script src="characterOptions.js?v=21"></script>
+<script src="maps.js?v=21"></script>
+<script src="textures.js?v=21"></script>
+<script src="weapons.js?v=21"></script>
+<script src="character.js?v=21"></script>
+<script src="audio.js?v=21"></script>
+<script src="effects.js?v=21"></script>
+<script src="ui.js?v=21"></script>
+<script src="game.js?v=21"></script>
 </body>
 </html>

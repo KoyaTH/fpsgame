@@ -459,3 +459,39 @@ kbd {
   .hotSlot { width: 84px; }
   .keybindGrid { grid-template-columns: 1fr; }
 }
+
+/* =============================================================================
+   PERSONAGEM (CUSTOMIZAÇÃO)
+   ============================================================================= */
+.characterPanel { width: min(900px, 100%); }
+.characterBody { display: grid; grid-template-columns: 300px 1fr; gap: 16px; }
+.charPreviewCol { display: flex; flex-direction: column; gap: 8px; }
+#charPreviewCanvas {
+  width: 100%; height: 380px; border-radius: 14px; border: 1px solid var(--line); cursor: grab; touch-action: none;
+  background: radial-gradient(ellipse at 50% 35%, #334155 0%, #0f172a 75%);
+}
+#charPreviewCanvas:active { cursor: grabbing; }
+.charPoses { display: flex; flex-wrap: wrap; gap: 5px; }
+.charPoses button, .charChip {
+  padding: 6px 10px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: var(--muted);
+  font: 600 13px var(--font-body);
+}
+.charPoses button:hover, .charChip:hover { color: var(--text); border-color: #475569; }
+.charPoses button.active, .charChip.active { background: rgba(34, 211, 238, 0.12); border-color: rgba(34, 211, 238, 0.6); color: var(--text); }
+.charPreviewRow { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+.charPreviewCol .hint { margin: 0; text-align: center; }
+.charOptionsCol { max-height: 470px; overflow-y: auto; padding-right: 4px; }
+.charSection { padding: 10px 12px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); margin-bottom: 8px; }
+.charSection h4 { margin: 0 0 8px; font: 700 14px var(--font-display); letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+.charSwatches, .charChips { display: flex; flex-wrap: wrap; gap: 6px; }
+.charSwatch {
+  width: 28px; height: 28px; border-radius: 50%; padding: 0; border: 2px solid #1e293b;
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.25); transition: transform .1s;
+}
+.charSwatch:hover { transform: scale(1.1); }
+.charSwatch.active { border-color: #fff; box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.6); }
+@media (max-width: 860px) {
+  .characterBody { grid-template-columns: 1fr; }
+  #charPreviewCanvas { height: 300px; }
+  .charOptionsCol { max-height: none; }
+}

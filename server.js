@@ -4,6 +4,7 @@ const os = require('os');
 const path = require('path');
 const { Server } = require('socket.io');
 const { loadMapObstacles } = require('./lib/mapObstacles');
+const { sanitizeCharacter } = require('./public/characterOptions');
 
 // ---------------------------------------------------------------------------
 // SERVIDOR HTTP / SOCKET.IO
@@ -206,7 +207,7 @@ function publicPlayer(p) {
   return {
     id: p.id, name: p.name, x: p.x, y: p.y, z: p.z, rotY: p.rotY, pitch: p.pitch, crouch: p.crouch,
     health: p.health, alive: p.alive, weaponKey: p.weaponKey,
-    kills: p.kills, deaths: p.deaths,
+    kills: p.kills, deaths: p.deaths, character: p.character,
   };
 }
 
@@ -457,12 +458,13 @@ io.on('connection', (socket) => {
   });
 
   socket.on('join', (data) => {
-    const { name, loadout } = data || {};
+    const { name, loadout, character } = data || {};
     if (players[socket.id] || !isValidLoadout(loadout)) return;
 
     const p = {
       id: socket.id,
       name: String(name || 'Jogador').slice(0, 16),
+      character: sanitizeCharacter(character),
       loadout: [...loadout],
       kills: 0,
       deaths: 0,
@@ -536,6 +538,18 @@ io.on('connection', (socket) => {
     socket.emit('loadoutChanged', { loadout: p.loadout, weaponKey: p.weaponKey, ammo: p.ammo });
   });
 
+  // Customização do personagem (vale na hora para todo mundo)
+  socket.on('changeCharacter', (data) => {
+    const p = players[socket.id];
+    if (!p) return;
+    // Cada troca reconstrói o modelo em todos os clientes: no máximo 1 por segundo
+    const now = Date.now();
+    if (now - (p.characterChangedAt || 0) < 1000) return;
+    p.characterChangedAt = now;
+    p.character = sanitizeCharacter(data && data.character);
+    io.emit('playerCharacter', { id: socket.id, character: p.character });
+  });
+
   socket.on('reload', () => {
     const p = players[socket.id];
     if (!p || !p.alive) return;
@@ -547,6 +561,8 @@ io.on('connection', (socket) => {
       return;
     }
     p.reloadingUntil = Date.now() + w.reloadTime;
+    // Os outros jogadores veem a animação de recarga
+    socket.broadcast.emit('playerReload', { id: socket.id, weaponKey: key, duration: w.reloadTime });
     p.reloadTimer = setTimeout(() => {
       p.reloadTimer = null;
       p.reloadingUntil = 0;
